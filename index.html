@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b2942">
+  <title>FieldReady Competency Study</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="safeguard" class="safeguardOverlay">
+  <div class="safeguardCard">
+    <div class="brandMark">FR</div>
+    <p class="eyebrow">FIELDREADY COMPETENCY STUDY</p>
+    <h1>Standardized longitudinal skills evaluation</h1>
+    <p>This research build supports evaluator calibration and study data capture. It is not clinical decision support and is not an operational casualty record.</p>
+    <div class="safeguardGrid">
+      <div><b>Minimum necessary data</b><span>Use Participant ID. Do not enter SSN, DoD ID, PHI, patient data, or unnecessary identifiers.</span></div>
+      <div><b>Local storage</b><span>Records remain in this browser until exported or cleared. Back up completed study events promptly.</span></div>
+      <div><b>Source control</b><span>Clinical criteria are drawn from the study-approved source skill sheets. Official current guidance controls if a discrepancy is found.</span></div>
+      <div><b>Research measurement</b><span>Formal evaluations are measurement events. Do not coach, cue, teach, or remediate during the scored encounter.</span></div>
+    </div>
+    <div class="accessGate">
+      <label><span>Research access password</span><input id="accessPassword" type="password" autocomplete="current-password" placeholder="Enter password"></label>
+      <div id="accessError" class="accessError hidden" role="alert">Incorrect password.</div>
+    </div>
+    <label class="ack"><input id="ackCheck" type="checkbox"> I am authorized to use this research evaluator and will protect study records.</label>
+    <button id="enterBtn" class="btn primary" disabled>Unlock FieldReady</button>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand" role="button" tabindex="0" id="homeBrand">
+    <div class="brandMark small">FR</div>
+    <div><b>FieldReady</b><span>Competency Study</span></div>
+  </div>
+  <div class="topActions">
+    <span id="versionBadge" class="versionBadge">v—</span>
+    <button id="backupAllBtn" class="btn ghost">Backup</button>
+    <button id="restoreBtn" class="btn ghost">Restore</button>
+    <button id="lockBtn" class="btn ghost">Lock</button>
+    <input id="restoreInput" type="file" accept="application/json" hidden>
+  </div>
+</header>
+
+<main>
+  <section id="homeView" class="view active">
+    <div class="hero">
+      <div>
+        <p class="eyebrow">LONGITUDINAL READINESS & COMPETENCY</p>
+        <h1>Study Evaluation Suite</h1>
+        <p class="sub">Class-based local evaluation modeled on the RaPS management structure, rebuilt for the nurse longitudinal competency study.</p>
+      </div>
+      <button id="newEventBtn" class="btn primary big">+ New Study Event</button>
+    </div>
+
+    <section class="panel">
+      <div class="panelHead">
+        <div><p class="eyebrow">PROGRAM MANAGEMENT INTELLIGENCE</p><h2>All local study events</h2></div>
+        <div class="filterRow">
+          <select id="filterMajcom"><option value="">All MAJCOMs</option></select>
+          <select id="filterBase"><option value="">All installations</option></select>
+          <select id="filterSkill"><option value="">All skills</option></select>
+          <select id="filterArm"><option value="">All study arms</option><option>Control</option><option>Frequency-Based</option><option>Deliberate Practice</option></select>
+          <select id="filterTime"><option value="">All timepoints</option><option value="baseline">Baseline</option><option value="3-month">3-Month</option><option value="6-month">6-Month</option></select>
+          <button id="resetFiltersBtn" class="btn ghost">Reset</button>
+        </div>
+      </div>
+      <div id="managementKpis" class="kpiGrid"></div>
+      <div class="twoCol">
+        <div><h3>MAJCOM & Installation Performance</h3><div id="locationTable" class="tableWrap"></div></div>
+        <div><h3>Observed Failure Patterns</h3><div id="failurePattern"></div><h3 class="spaced">Highest Competency Gaps</h3><div id="gapTable" class="tableWrap"></div></div>
+      </div>
+      <h3 class="spaced">Retention by Study Arm & Timepoint</h3>
+      <div id="retentionTable" class="tableWrap"></div>
+      <div class="actionsRow">
+        <button id="managementCsvBtn" class="btn ghost">Management Summary CSV</button>
+        <button id="enterpriseCsvBtn" class="btn ghost">Enterprise Detail CSV</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">LONGITUDINAL PARTICIPANT RECORDS</p><h2>Baseline → 3-Month → 6-Month</h2><p class="sub">Participant IDs are linked across study events so an evaluator or study team member can reopen the same participant and compare performance over time.</p></div></div>
+      <div id="participantIndex" class="tableWrap"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">STUDY EVENTS</p><h2>Events / evaluation classes</h2></div></div>
+      <div id="eventsList" class="eventList"></div>
+    </section>
+  </section>
+
+  <section id="eventView" class="view">
+    <button class="backLink" data-home>← All Study Events</button>
+    <div class="hero compact">
+      <div><p id="eventKicker" class="eyebrow"></p><h1 id="eventTitle"></h1><p id="eventSub" class="sub"></p></div>
+      <div class="heroBtns"><button id="editEventBtn" class="btn ghost">Edit Event</button><button id="exportEventBtn" class="btn ghost">Export Event CSV</button></div>
+    </div>
+    <div id="eventMeta" class="metaGrid"></div>
+
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">FORMAL MEASUREMENT ROSTER</p><h2>Participants</h2></div><button id="addParticipantBtn" class="btn primary">+ Add Participant</button></div>
+      <div class="noteBanner">Evaluator grading view displays Participant ID and hides study-arm labels. Intervention exposure fields are retained for analysis but do not alter the score.</div>
+      <div id="rosterTable" class="tableWrap"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">EVENT PERFORMANCE</p><h2>Competency intelligence</h2></div></div>
+      <div id="eventKpis" class="kpiGrid"></div>
+      <div class="twoCol"><div><h3>Top criterion gaps</h3><div id="eventGapTable" class="tableWrap"></div></div><div><h3>Primary contributors</h3><div id="eventContributors"></div></div></div>
+    </section>
+  </section>
+
+  <section id="participantView" class="view">
+    <button class="backLink" id="backParticipantsBtn">← Study Dashboard</button>
+    <div class="hero compact">
+      <div><p class="eyebrow">LONGITUDINAL STUDY RECORD</p><h1 id="recordTitle"></h1><p id="recordSub" class="sub"></p></div>
+      <div class="heroBtns"><button id="exportRecordBtn" class="btn ghost">Export Longitudinal CSV</button></div>
+    </div>
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">ASSESSMENT</p><h2>Compare study timepoints</h2></div><select id="recordSkillSelect"></select></div>
+      <div id="timepointCards" class="timepointGrid"></div>
+    </section>
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">CRITERION-LEVEL CHANGE</p><h2>Baseline vs 3-Month vs 6-Month</h2></div></div>
+      <div id="recordFilterRow" class="filterRow recordFilters"></div>
+      <div id="criterionComparison" class="tableWrap comparisonWrap"></div>
+    </section>
+  </section>
+
+  <section id="evalView" class="view">
+    <button class="backLink" id="backRosterBtn">← Roster</button>
+    <div class="evalHeader">
+      <div><p id="evalKicker" class="eyebrow"></p><h1 id="evalTitle"></h1><p id="evalSub" class="sub"></p><button id="recordFromEvalBtn" class="btn ghost recordLinkBtn">View Longitudinal Record</button></div>
+      <div class="evalStats"><div><small>SCORE</small><b id="scoreKpi">—</b></div><div><small>CRITICAL FAIL</small><b id="critKpi">0</b></div><div><small>UNRESOLVED</small><b id="unresolvedKpi">0</b></div></div>
+    </div>
+    <div id="assessmentStopwatch" class="assessmentStopwatch"></div>
+    <div id="timerStrip" class="timerStrip"></div>
+    <div class="evalToolbar"><button id="prevSectionBtn" class="btn ghost">← Previous</button><select id="sectionSelect"></select><button id="nextUnresolvedBtn" class="btn ghost">Next Unresolved</button><button id="nextSectionBtn" class="btn ghost">Next →</button></div>
+    <div id="criteriaList" class="criteriaList"></div>
+    <section class="panel signoffPanel">
+      <h3>Sign-Off / Notes</h3>
+      <div class="formGrid"><label><span>Evaluator name</span><input id="evalName"></label><label><span>Evaluator ID</span><input id="evalId"></label><label class="full"><span>Objective notes</span><textarea id="overallNotes" rows="3"></textarea></label></div>
+      <div class="actionsRow"><button id="voidAttemptBtn" class="btn danger ghost">Void Attempt</button><button id="reviewFinalizeBtn" class="btn primary">Review / Finalize</button></div>
+    </section>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden" aria-hidden="true">
+  <div class="modalCard"><button id="modalClose" class="modalClose" aria-label="Close">×</button><h2 id="modalTitle"></h2><div id="modalBody"></div></div>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="version.js"></script>
+<script src="access-config.js"></script>
+<script src="locations.js"></script>
+<script src="skills.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
