@@ -3,7 +3,8 @@
 const $ = id => document.getElementById(id);
 const SKILLS = window.FIELDREADY_SKILLS || {};
 const LOC = window.FIELDREADY_LOCATION_DATA || {commands:[],installations:[]};
-const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};\nconst SYNC = window.FieldReadySync || null;
+const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};
+const SYNC = window.FieldReadySync || null;
 const DB_KEY='FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data continuity
 const uuid=()=>crypto.randomUUID?crypto.randomUUID():`id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
