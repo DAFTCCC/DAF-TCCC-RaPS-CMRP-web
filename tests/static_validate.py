@@ -136,7 +136,14 @@ if 'passwordHashSha256' not in access: errors.append('access-config.js missing p
 if 'sha256Hex' not in app or 'unlockFieldReady' not in app: errors.append('app.js missing password verification functions')
 if 'sessionStorage.setItem(ACCESS.sessionKey' not in app: errors.append('Password unlock must be session scoped')
 
-# Backend foundation hooks.\nbackend=(root/'backend-config.js').read_text(encoding='utf-8') if (root/'backend-config.js').exists() else ''\nsync=(root/'sync.js').read_text(encoding='utf-8') if (root/'sync.js').exists() else ''\nif 'FIELDREADY_BACKEND' not in backend: errors.append('backend-config.js missing FIELDREADY_BACKEND')\nif 'FieldReadySync' not in sync: errors.append('sync.js missing FieldReadySync')\nif 'syncStatusBtn' not in html: errors.append('index.html missing sync status control')\n\n# JS syntax checks.
+# Backend foundation hooks.
+backend=(root/'backend-config.js').read_text(encoding='utf-8') if (root/'backend-config.js').exists() else ''
+sync=(root/'sync.js').read_text(encoding='utf-8') if (root/'sync.js').exists() else ''
+if 'FIELDREADY_BACKEND' not in backend: errors.append('backend-config.js missing FIELDREADY_BACKEND')
+if 'FieldReadySync' not in sync: errors.append('sync.js missing FieldReadySync')
+if 'syncStatusBtn' not in html: errors.append('index.html missing sync status control')
+
+# JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
         p=subprocess.run(['node','--check',str(root/f)],capture_output=True,text=True)
