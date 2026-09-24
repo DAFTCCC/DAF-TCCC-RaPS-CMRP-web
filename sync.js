@@ -66,7 +66,7 @@ function flatten(db){
 }
 async function upsert(table,rows){if(!rows.length)return;await api('/rest/v1/'+table+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});}
 async function getAll(table){return (await api('/rest/v1/'+table+'?select=*',{method:'GET'}))||[];}
-async function push(db){const x=flatten(db);await upsert(CFG.tables.events,x.events);await upsert(CFG.tables.participants,x.participants);await upsert(CFG.tables.evaluations,x.evaluations);await upsert(CFG.tables.voids,x.voids);}
+async function push(db,serverEvaluations=[]){const x=flatten(db);const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));await upsert(CFG.tables.events,x.events);await upsert(CFG.tables.participants,x.participants);await upsert(CFG.tables.evaluations,writableEvaluations);await upsert(CFG.tables.voids,x.voids);}
 function rebuild(x,fallback){
  const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,participants:[]}));
  const pMap=new Map();x.participants.forEach(r=>{const e=eMap.get(r.event_id);if(!e)return;const p={...(r.payload||{}),id:r.id,participantId:(r.payload||{}).participantId||r.participant_code,voids:[],evaluation:null};e.participants.push(p);pMap.set(r.id,p);});
@@ -79,7 +79,7 @@ async function syncNow(dbArg){
  if(busy||!configured()||!navigator.onLine)return;
  await ensureSession();if(!session()?.access_token){renderStatus();return;}
  busy=true;renderStatus();
- try{const db=dbArg||getDb?.();if(!db)throw new Error('No local FieldReady database is available.');await push(db);const remote=await pull(db);const m=readMeta();m.pending=0;m.lastError=null;m.lastSyncAt=Date.now();writeMeta(m);window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));}
+ try{const db=dbArg||getDb?.();if(!db)throw new Error('No local FieldReady database is available.');const serverEvaluations=await getAll(CFG.tables.evaluations);await push(db,serverEvaluations);const remote=await pull(db);const m=readMeta();m.pending=0;m.lastError=null;m.lastSyncAt=Date.now();writeMeta(m);window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));}
  catch(e){const m=readMeta();m.lastError=e?.message||String(e);writeMeta(m);throw e;}
  finally{busy=false;renderStatus();}
 }
