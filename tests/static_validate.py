@@ -3,7 +3,7 @@ import re, sys, subprocess, json, tempfile
 
 root=Path(__file__).resolve().parents[1]
 errors=[]
-required=['index.html','styles.css','version.js','access-config.js','locations.js','skills.js','app.js','manifest.webmanifest','sw.js','README.md','DATA_DICTIONARY.md','VALIDATION.md','SOURCE_MAPPING.md','PAGE4_FAILURE_WORKFLOW.md','.nojekyll','assets/icon.svg']
+required=['index.html','styles.css','version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','manifest.webmanifest','sw.js','README.md','DATA_DICTIONARY.md','VALIDATION.md','SOURCE_MAPPING.md','PAGE4_FAILURE_WORKFLOW.md','.nojekyll','assets/icon.svg']
 for f in required:
     if not (root/f).exists(): errors.append(f'Missing {f}')
 
@@ -125,7 +125,7 @@ for fn in ['renderParticipantIndex','openLongitudinalRecord','renderLongitudinal
 for tp in ["'baseline'","'3-month'","'6-month'"]:
     if tp not in app: errors.append(f'Missing study timepoint in app.js: {tp}')
 if 'assessment_stopwatch_seconds' not in app: errors.append('Exports missing assessment_stopwatch_seconds')
-if '4.1.1-study-web' not in version: errors.append('version.js not updated to 4.1.1-study-web')
+if '4.2.0-study-web' not in version: errors.append('version.js not updated to 4.2.0-study-web')
 
 
 # Splash-page password gate.
@@ -136,8 +136,8 @@ if 'passwordHashSha256' not in access: errors.append('access-config.js missing p
 if 'sha256Hex' not in app or 'unlockFieldReady' not in app: errors.append('app.js missing password verification functions')
 if 'sessionStorage.setItem(ACCESS.sessionKey' not in app: errors.append('Password unlock must be session scoped')
 
-# JS syntax checks.
-for f in ['version.js','access-config.js','locations.js','skills.js','app.js','sw.js']:
+# Backend foundation hooks.\nbackend=(root/'backend-config.js').read_text(encoding='utf-8') if (root/'backend-config.js').exists() else ''\nsync=(root/'sync.js').read_text(encoding='utf-8') if (root/'sync.js').exists() else ''\nif 'FIELDREADY_BACKEND' not in backend: errors.append('backend-config.js missing FIELDREADY_BACKEND')\nif 'FieldReadySync' not in sync: errors.append('sync.js missing FieldReadySync')\nif 'syncStatusBtn' not in html: errors.append('index.html missing sync status control')\n\n# JS syntax checks.
+for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
         p=subprocess.run(['node','--check',str(root/f)],capture_output=True,text=True)
         if p.returncode: errors.append(f'JS syntax {f}: {p.stderr.strip()}')
