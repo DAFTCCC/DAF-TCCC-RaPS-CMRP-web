@@ -1,4 +1,4 @@
-# Changelog
+# Changelog\n\n## 4.2.0-study-web — 2026-09-23\n\n- Added disabled-by-default FieldReady NUC/Supabase backend configuration.\n- Added local-first synchronization states and top-bar status control.\n- Added Supabase Auth sign-in/sync panel when backend is enabled.\n- Added dedicated `fr_*` database schema, RLS scope model, server revisions, finalized-record lock, and audit log foundation.\n- Protected already-finalized server evaluations from repeat client upserts.\n- Kept RaPS separate and unchanged.\n\n# Changelog
 
 ## 4.1.0-study-web — 2026-09-18
 
