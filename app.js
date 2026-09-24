@@ -3,7 +3,7 @@
 const $ = id => document.getElementById(id);
 const SKILLS = window.FIELDREADY_SKILLS || {};
 const LOC = window.FIELDREADY_LOCATION_DATA || {commands:[],installations:[]};
-const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};
+const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};\nconst SYNC = window.FieldReadySync || null;
 const DB_KEY='FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data continuity
 const uuid=()=>crypto.randomUUID?crypto.randomUUID():`id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -62,7 +62,7 @@ function migrateLegacyCmcEvaluation(ev,e){
 function normPid(v){return String(v||'').trim().toUpperCase();}
 function itemsForSkill(s){return s?s.sections.flatMap(sec=>sec.items.map(i=>({...i,section:sec.code,sectionTitle:sec.title}))):[];}
 function loadDb(){try{return normalizeDb(JSON.parse(localStorage.getItem(DB_KEY)))||defaultDb();}catch{return defaultDb();}}
-function saveDb(){db.appVersion=BUILD.versionName;localStorage.setItem(DB_KEY,JSON.stringify(db));}
+function saveDb(){db.appVersion=BUILD.versionName;localStorage.setItem(DB_KEY,JSON.stringify(db));SYNC?.noteLocalChange?.(db);}
 function event(){return db.events.find(e=>e.id===currentEventId)||null;}
 function participant(){return event()?.participants.find(p=>p.id===currentParticipantId)||null;}
 function skill(e=event()){return e?SKILLS[e.skillId]:null;}
@@ -216,6 +216,23 @@ function exportEventCsv(){const e=event(),s=skill(e),headers=['event_id','event_
 function safeName(s){return String(s||'export').replace(/[^a-z0-9_-]+/gi,'_');}
 function managementSummaryCsv(){const events=scopedEvents(),headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation','skill','participants','finalized','pass','mean_score','critical_fail'];const rows=[headers];events.forEach(e=>{const a=eventAnalytics(e);rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),SKILLS[e.skillId]?.shortName||e.skillId,e.participants.length,a.rows.length,a.pass,a.avg==null?'':(a.avg*100).toFixed(1),a.crit]);});download('FieldReady_Management_Summary.csv',rows.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
 function enterpriseCsv(){const saved=currentEventId;const events=scopedEvents();const out=[];events.forEach(e=>{currentEventId=e.id;const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor'];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};out.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),e.skillId,p.participantId,p.afsc,p.clinicalYears,p.workSection,ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'']);});});});currentEventId=saved;const headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor'];download('FieldReady_Enterprise_Detail.csv',[headers,...out].map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
+
+function openSyncPanel(){
+ const s=SYNC?.status?.()||{code:'local',label:'LOCAL ONLY',detail:'Backend sync is unavailable.'};
+ const sess=SYNC?.session?.();
+ if(!SYNC?.configured?.()){
+  openModal('FieldReady synchronization',`<div class="reviewBox"><b>${esc(s.label)}</b><p>${esc(s.detail)}</p></div><p>The NUC backend is intentionally disabled until the dedicated FieldReady Supabase endpoint and public anon key are configured.</p><p class="tiny">RaPS remains separate and is not modified by this FieldReady configuration.</p>`);
+  return;
+ }
+ if(!sess?.access_token){
+  openModal('Sign in to FieldReady',`<p>Use your FieldReady study account. Credentials are sent only to the configured NUC-hosted Supabase Auth endpoint.</p><form id="syncLoginForm"><div class="formGrid"><label class="full"><span>Email</span><input name="email" type="email" autocomplete="username" required></label><label class="full"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Sign in & sync</button></div><div id="syncLoginError" class="accessError hidden"></div></form>`);
+  $('syncLoginForm').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.target),err=$('syncLoginError');err.classList.add('hidden');try{await SYNC.signIn(String(fd.get('email')||'').trim(),String(fd.get('password')||''));await SYNC.syncNow(db);closeModal();toast('FieldReady synchronized.');renderHome();}catch(x){err.textContent=x.message||String(x);err.classList.remove('hidden');}};
+  return;
+ }
+ openModal('FieldReady synchronization',`<div class="reviewBox"><b>${esc(s.label)}</b><p>${esc(s.detail)}</p></div><p>Signed in as <b>${esc(sess.user?.email||'FieldReady user')}</b>.</p><div class="actionsRow"><button id="syncNowBtn" class="btn primary">Sync now</button><button id="syncSignOutBtn" class="btn ghost">Sign out</button></div>`);
+ $('syncNowBtn').onclick=async()=>{try{await SYNC.syncNow(db);closeModal();toast('FieldReady synchronized.');renderHome();}catch(x){alert('Sync failed: '+(x.message||x));}};
+ $('syncSignOutBtn').onclick=async()=>{await SYNC.signOut();closeModal();toast('FieldReady signed out.');};
+}
 function backupAll(){download(`FieldReady_Backup_${isoDate()}.json`,JSON.stringify(db,null,2),'application/json');}
 function restoreAll(file){const r=new FileReader();r.onload=()=>{try{const x=normalizeDb(JSON.parse(r.result));if(!x)throw new Error('Invalid backup');if(!confirm(`Restore ${x.events.length} study event(s)? This replaces current local data.`))return;db=x;saveDb();renderHome();toast('Backup restored.');}catch(err){alert(`Restore failed: ${err.message}`);}};r.readAsText(file);}
 
