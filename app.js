@@ -3,7 +3,8 @@
 const $ = id => document.getElementById(id);
 const SKILLS = window.FIELDREADY_SKILLS || {};
 const LOC = window.FIELDREADY_LOCATION_DATA || {commands:[],installations:[]};
-const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};\nconst SYNC = window.FieldReadySync || null;
+const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};
+const SYNC = window.FieldReadySync || null;
 const DB_KEY='FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data continuity
 const uuid=()=>crypto.randomUUID?crypto.randomUUID():`id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -267,6 +268,16 @@ $('versionBadge').textContent=`v${BUILD.versionName}`;$('homeBrand').onclick=ren
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
 $('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
 
+$('syncStatusBtn').onclick=openSyncPanel;
+window.addEventListener('fieldready:remote-db',e=>{
+ const remote=normalizeDb(e.detail?.db);
+ if(!remote)return;
+ db=remote;
+ localStorage.setItem(DB_KEY,JSON.stringify(db));
+ renderHome();
+ toast('FieldReady server data refreshed.');
+});
+SYNC?.init?.({getDb:()=>db});
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 renderHome();
 })();
