@@ -1,4 +1,19 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.1.0-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.2.0-study-web
+
+## v4.2.0 — optional NUC/Supabase backend foundation
+
+This branch adds a **disabled-by-default** central persistence layer for the FieldReady study without changing RaPS.
+
+- GitHub Pages remains the front-facing FieldReady application.
+- The NUC can host a dedicated FieldReady Supabase/Postgres/Auth/API backend.
+- Local/offline evaluation remains available; saves are marked pending until synchronized.
+- The top bar exposes LOCAL ONLY / SIGN IN / READY TO SYNC / PENDING / SYNCING / SYNCED / OFFLINE / SYNC ERROR.
+- Server-side RLS scopes evaluator, installation manager, MAJCOM manager, and enterprise access.
+- Finalized evaluation rows are immutable at the database layer.
+- Server revision fields and append-only audit records are included.
+- The browser configuration accepts only the public/anon key. Never commit a service_role key.
+
+See `NUC_SETUP.md` and `supabase/001_fieldready_core.sql`. The backend remains `enabled: false` until the dedicated FieldReady NUC endpoint is configured and tested.
 
 FieldReady is a **static GitHub Pages evaluator and longitudinal study prototype**. It uses the DAF TCCC RaPS web app as the workflow/management baseline—event creation, MAJCOM and installation organization, roster workflow, criterion-level scoring, timers, local analytics, and export—while limiting the formal study measurements to the five approved study skill sets.
 
@@ -107,7 +122,7 @@ The dashboard retains descriptive rollups by MAJCOM, installation, skill, study 
 
 ## Storage and study-data caution
 
-This repository is a static/offline-capable prototype. Working records are stored in browser `localStorage`; this is **not** an authoritative enterprise research database. Export/backup on the approved study schedule. Use Participant ID rather than names in research records whenever the protocol permits.
+With the backend disabled, working records are stored in browser `localStorage`. When the dedicated FieldReady NUC backend is enabled, local storage becomes the offline working copy and authorized server records become the central persistence layer. Export/backup on the approved study schedule. Use Participant ID rather than names in research records whenever the protocol permits.
 
 ## GitHub Pages deployment
 
