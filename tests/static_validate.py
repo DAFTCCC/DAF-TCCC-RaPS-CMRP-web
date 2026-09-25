@@ -150,6 +150,12 @@ sw_text=(root/'sw.js').read_text(encoding='utf-8') if (root/'sw.js').exists() el
 if 'url.origin!==self.location.origin' not in sw_text:
     errors.append('Service worker must bypass cross-origin backend/API requests')
 
+# Sync must protect newer local edits from an older in-flight pull.
+if 'changeGeneration' not in sync or 'rerunAfterBusy' not in sync:
+    errors.append('sync.js missing in-flight local-change protection')
+if 'if(changeGeneration!==startedGeneration)' not in sync:
+    errors.append('sync.js must reject stale pull snapshots after concurrent local edits')
+
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
