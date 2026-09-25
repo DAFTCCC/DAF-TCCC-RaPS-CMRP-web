@@ -395,6 +395,53 @@ $('accessPassword').onkeydown=e=>{if(e.key==='Enter'&&!$('enterBtn').disabled)un
 $('enterBtn').onclick=unlockFieldReady;
 $('requestAccountBtn').onclick=openAccountRequest;
 $('lockBtn').onclick=lockFieldReady;
+async function handleAuthCallback(){
+ let cb=null;
+ try{cb=await SYNC?.acceptAuthCallback?.();}catch(e){
+  const err=$('accessError');err.textContent=e?.message||'Unable to process FieldReady authentication link.';err.classList.remove('hidden');return false;
+ }
+ if(!cb)return false;
+
+ if(cb.type==='invite'||cb.type==='recovery'){
+  openModal('Set your FieldReady password',`
+   <p>Your identity has been verified. Create the password you will use for FieldReady.</p>
+   <form id="invitePasswordForm">
+    <div class="formGrid">
+     <label><span>New password</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+     <label><span>Confirm password</span><input name="confirm" type="password" minlength="8" required autocomplete="new-password"></label>
+    </div>
+    <div id="invitePasswordError" class="accessError hidden"></div>
+    <div class="actionsRow spaced"><button class="btn primary" type="submit">Set password & enter FieldReady</button></div>
+   </form>`);
+  $('invitePasswordForm').onsubmit=async e=>{
+   e.preventDefault();const fd=new FormData(e.target),pw=String(fd.get('password')||''),confirm=String(fd.get('confirm')||''),err=$('invitePasswordError');err.classList.add('hidden');
+   if(pw!==confirm){err.textContent='Passwords do not match.';err.classList.remove('hidden');return;}
+   const btn=e.target.querySelector('button[type="submit"]');btn.disabled=true;
+   try{
+    await SYNC.updatePassword(pw);
+    const profile=await SYNC.requireAuthorizedProfile();
+    setAccountUi(profile);
+    $('safeguard').classList.add('hidden');
+    closeModal();
+    await SYNC.syncNow(db);
+    renderHome();
+    toast('FieldReady account activated.');
+   }catch(ex){err.textContent=ex?.message||'Unable to set password.';err.classList.remove('hidden');}
+   finally{btn.disabled=false;}
+  };
+  return true;
+ }
+
+ if(cb.type==='signup'){
+  try{await SYNC.signOut();}catch{}
+  setAccountUi(null);
+  $('safeguard').classList.remove('hidden');
+  const err=$('accessError');err.textContent='Email confirmed. Your FieldReady account request is waiting for administrator approval.';err.classList.remove('hidden');
+  return true;
+ }
+ return false;
+}
+
 async function restoreAuthorizedSession(){
  if(!SYNC?.session?.()?.access_token){
   setAccountUi(null);
@@ -412,7 +459,7 @@ async function restoreAuthorizedSession(){
   const err=$('accessError');err.textContent=e?.message||'This account is not authorized for FieldReady.';err.classList.remove('hidden');
  }
 }
-restoreAuthorizedSession();
+handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
 $('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
 $('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
