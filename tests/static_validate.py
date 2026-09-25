@@ -156,6 +156,12 @@ if 'changeGeneration' not in sync or 'rerunAfterBusy' not in sync:
 if 'if(changeGeneration!==startedGeneration)' not in sync:
     errors.append('sync.js must reject stale pull snapshots after concurrent local edits')
 
+# Remote sync must preserve the evaluator's active workflow instead of forcing Home.
+if "activeView=document.querySelector('.view.active')" not in app:
+    errors.append('Remote sync must capture the active view before applying server data')
+for required in ["activeView==='evalView'", "renderEvaluation()", "activeView==='eventView'", "renderEvent()"]:
+    if required not in app: errors.append(f'Missing active-view sync preservation hook: {required}')
+
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
