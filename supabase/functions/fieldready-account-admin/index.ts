@@ -26,9 +26,14 @@ Deno.serve(async (req:Request) => {
   if (!supabaseUrl || !serviceKey) return json(500,{message:'FieldReady account administration is not configured.'});
   if (!callerToken) return json(401,{message:'Authentication required.'});
 
+  const userRes=await fetch(supabaseUrl+'/auth/v1/user',{
+    headers:{apikey:serviceKey,Authorization:'Bearer '+callerToken}
+  });
+  const user=userRes.ok?await userRes.json():null;
+  if(!user?.id)return json(401,{message:'Invalid or expired FieldReady session.'});
+
   const callerRes=await fetch(
-    supabaseUrl+'/rest/v1/fr_profiles?select=user_id,role,active&user_id=eq.'+
-      encodeURIComponent(JSON.parse(atob(callerToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub),
+    supabaseUrl+'/rest/v1/fr_profiles?select=user_id,role,active&user_id=eq.'+encodeURIComponent(user.id),
     {headers:{apikey:serviceKey,Authorization:'Bearer '+serviceKey}}
   );
   const callerRows=callerRes.ok?await callerRes.json():[];
