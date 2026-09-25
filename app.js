@@ -33,6 +33,22 @@ let db=loadDb();
 let currentEventId=null,currentParticipantId=null,currentSection=0,currentRecordKey='',currentRecordSkill='',recordCriterionFilter='all';
 let filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};
 let ticker=null;
+let currentAccessProfile=null;
+
+function scopeOptions(role,majcom='',installationId=''){
+ if(role==='majcom_manager'){
+  return `<label class="full"><span>MAJCOM scope</span><select name="scopeValue" required><option value="">Select MAJCOM</option>${LOC.commands.map(c=>`<option value="${esc(c.id)}" ${c.id===majcom?'selected':''}>${esc(c.name)}</option>`).join('')}</select><input type="hidden" name="scopeType" value="majcom"></label>`;
+ }
+ if(role==='program_manager'){
+  return `<label class="full"><span>Installation scope</span><select name="scopeValue" required><option value="">Select installation</option>${LOC.installations.slice().sort((x,y)=>x.name.localeCompare(y.name)).map(i=>`<option value="${esc(i.id)}" ${i.id===installationId?'selected':''}>${esc(installationLabel(i))}</option>`).join('')}</select><input type="hidden" name="scopeType" value="installation"></label>`;
+ }
+ return '';
+}
+function setAccountUi(profile){
+ currentAccessProfile=profile||null;
+ const admin=$('adminBtn');
+ if(admin)admin.classList.toggle('hidden',profile?.role!=='enterprise');
+}
 
 function defaultDb(){return {schemaVersion:5,appVersion:BUILD.versionName,events:[]};}
 function normalizeDb(x){
@@ -78,6 +94,92 @@ function showView(id){document.querySelectorAll('.view').forEach(v=>v.classList.
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200);}
 function openModal(title,html){$('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden');$('modal').setAttribute('aria-hidden','false');}
 function closeModal(){$('modal').classList.add('hidden');$('modal').setAttribute('aria-hidden','true');$('modalBody').innerHTML='';}
+
+function openAccountRequest(){
+ const majcomOptions=LOC.commands.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+ openModal('Request a FieldReady evaluator account',`
+  <p>Requests require administrator approval before study data can be accessed. Use your authorized work email and do not enter participant or patient information.</p>
+  <form id="accountRequestForm">
+   <div class="formGrid">
+    <label><span>Name</span><input name="displayName" required autocomplete="name"></label>
+    <label><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
+    <label><span>Password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+    <label><span>Confirm password</span><input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></label>
+    <label><span>MAJCOM</span><select name="majcom" id="requestMajcom" required><option value="">Select MAJCOM</option>${majcomOptions}</select></label>
+    <label><span>Installation</span><select name="installationId" id="requestInstallation" required><option value="">Select MAJCOM first</option></select></label>
+   </div>
+   <div id="accountRequestError" class="accessError hidden" role="alert"></div>
+   <div class="actionsRow spaced"><button class="btn primary" type="submit">Submit request</button></div>
+  </form>`);
+ const maj=$('requestMajcom'),base=$('requestInstallation');
+ const fillBases=()=>{const selected=maj.value;base.innerHTML='<option value="">Select installation</option>'+LOC.installations.filter(i=>(i.commands||[]).includes(selected)).sort((x,y)=>x.name.localeCompare(y.name)).map(i=>`<option value="${esc(i.id)}">${esc(installationLabel(i))}</option>`).join('');};
+ maj.onchange=fillBases;
+ $('accountRequestForm').onsubmit=async e=>{
+  e.preventDefault();
+  const fd=new FormData(e.target),pw=String(fd.get('password')||''),confirm=String(fd.get('confirmPassword')||''),err=$('accountRequestError');
+  err.classList.add('hidden');
+  if(pw!==confirm){err.textContent='Passwords do not match.';err.classList.remove('hidden');return;}
+  const btn=e.target.querySelector('button[type="submit"]');btn.disabled=true;
+  try{
+   await SYNC.requestAccount({
+    email:fd.get('email'),password:pw,displayName:fd.get('displayName'),
+    majcom:fd.get('majcom'),installationId:fd.get('installationId')
+   });
+   closeModal();
+   toast('Account request submitted. Administrator approval is required before sign-in.');
+  }catch(ex){err.textContent=ex?.message||'Unable to submit account request.';err.classList.remove('hidden');}
+  finally{btn.disabled=false;}
+ };
+}
+
+async function renderAdmin(){
+ if(currentAccessProfile?.role!=='enterprise')return renderHome();
+ showView('adminView');
+ $('accountRequestsTable').innerHTML='<div class="empty">Loading account requests…</div>';
+ $('accountUsersTable').innerHTML='<div class="empty">Loading users…</div>';
+ try{
+  const data=await SYNC.listAccountAdministration();
+  const memberships=new Map((data.memberships||[]).map(m=>[m.user_id,m]));
+  const pending=(data.requests||[]).filter(r=>r.status==='pending');
+  $('accountRequestsTable').innerHTML=pending.length?`<table class="dataTable"><thead><tr><th>Name</th><th>Email</th><th>Requested location</th><th>Requested</th><th></th></tr></thead><tbody>${pending.map(r=>`<tr><td><b>${esc(r.display_name||'—')}</b></td><td>${esc(r.email)}</td><td>${esc(r.majcom||'—')} · ${esc(installation(r.installation_id)?.name||r.installation_id||'—')}</td><td>${r.created_at?esc(new Date(r.created_at).toLocaleString()):'—'}</td><td><div class="actionsRow"><button class="btn primary compactBtn" data-approve-request="${r.id}">Approve</button><button class="btn danger ghost compactBtn" data-deny-request="${r.id}">Deny</button></div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No pending account requests.</div>';
+
+  $('accountUsersTable').innerHTML=(data.profiles||[]).length?`<table class="dataTable"><thead><tr><th>User</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${data.profiles.map(p=>{const m=memberships.get(p.user_id);const scope=m?(m.scope_type==='majcom'?commandName(m.scope_value):(installation(m.scope_value)?.name||m.scope_value)):'Enterprise / event assignment';return `<tr><td><b>${esc(p.display_name||'—')}</b><div class="tiny">${esc(p.email||p.user_id)}</div></td><td>${esc(p.role)}</td><td>${esc(scope)}</td><td><span class="status ${p.active?'pass':'fail'}">${p.active?'ACTIVE':'INACTIVE'}</span></td><td><button class="btn ghost compactBtn" data-edit-user="${p.user_id}">Manage</button></td></tr>`;}).join('')}</tbody></table>`:'<div class="empty">No FieldReady users found.</div>';
+
+  document.querySelectorAll('[data-approve-request]').forEach(b=>b.onclick=()=>openApproveRequest((data.requests||[]).find(r=>r.id===b.dataset.approveRequest)));
+  document.querySelectorAll('[data-deny-request]').forEach(b=>b.onclick=async()=>{const note=prompt('Reason for denial (optional):')||'';try{await SYNC.denyAccountRequest(b.dataset.denyRequest,note);toast('Account request denied.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to deny request.');}});
+  document.querySelectorAll('[data-edit-user]').forEach(b=>b.onclick=()=>openManageUser((data.profiles||[]).find(p=>p.user_id===b.dataset.editUser),memberships.get(b.dataset.editUser)));
+ }catch(ex){
+  $('accountRequestsTable').innerHTML=`<div class="empty bad">${esc(ex?.message||'Unable to load account administration.')}</div>`;
+  $('accountUsersTable').innerHTML='';
+ }
+}
+
+function adminRoleForm(role='evaluator',membership=null){
+ return `<label><span>Role</span><select name="role" id="adminRole"><option value="evaluator" ${role==='evaluator'?'selected':''}>Evaluator</option><option value="program_manager" ${role==='program_manager'?'selected':''}>Program Manager</option><option value="majcom_manager" ${role==='majcom_manager'?'selected':''}>MAJCOM Manager</option><option value="enterprise" ${role==='enterprise'?'selected':''}>Enterprise</option></select></label><div id="adminScopeFields" class="full">${scopeOptions(role,membership?.scope_type==='majcom'?membership.scope_value:'',membership?.scope_type==='installation'?membership.scope_value:'')}</div>`;
+}
+function wireAdminRoleScope(form,membership=null){
+ const role=form.querySelector('#adminRole'),scope=form.querySelector('#adminScopeFields');
+ const refresh=()=>{scope.innerHTML=scopeOptions(role.value,membership?.scope_type==='majcom'?membership.scope_value:'',membership?.scope_type==='installation'?membership.scope_value:'');};
+ role.onchange=()=>{membership=null;refresh();};
+}
+function openApproveRequest(r){
+ if(!r)return;
+ openModal('Approve FieldReady account',`<p><b>${esc(r.display_name||r.email)}</b><br>${esc(r.email)}</p><form id="approveAccountForm"><div class="formGrid">${adminRoleForm('evaluator')}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Approve account</button></div></form>`);
+ const form=$('approveAccountForm');wireAdminRoleScope(form);
+ form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{await SYNC.approveAccountRequest(r.id,fd.get('role'),fd.get('scopeType')||null,fd.get('scopeValue')||null);closeModal();toast('Account approved.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to approve account.');}};
+}
+function openManageUser(p,membership){
+ if(!p)return;
+ openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active?'checked':''}> Account active</label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button></div></form>`);
+ const form=$('manageAccountForm');wireAdminRoleScope(form,membership);
+ form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{await SYNC.setUserAccess(p.user_id,fd.get('active')==='on',fd.get('role'),fd.get('scopeType')||null,fd.get('scopeValue')||null);closeModal();toast('User access updated.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to update access.');}};
+}
+function openInviteUser(){
+ openModal('Invite FieldReady user',`<p>The invitation email is sent by the dedicated FieldReady Auth service. The invited user sets their own password; no administrator password is created or exposed.</p><form id="inviteAccountForm"><div class="formGrid"><label><span>Name</span><input name="displayName" required></label><label><span>Email</span><input name="email" type="email" required></label>${adminRoleForm('evaluator')}</div><div id="inviteAccountError" class="accessError hidden"></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Send invitation</button></div></form>`);
+ const form=$('inviteAccountForm');wireAdminRoleScope(form);
+ form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),err=$('inviteAccountError'),btn=form.querySelector('button[type="submit"]');err.classList.add('hidden');btn.disabled=true;try{await SYNC.inviteUser({email:fd.get('email'),displayName:fd.get('displayName'),role:fd.get('role'),scopeType:fd.get('scopeType')||null,scopeValue:fd.get('scopeValue')||null});closeModal();toast('Invitation sent and FieldReady access provisioned.');renderAdmin();}catch(ex){err.textContent=ex?.message||'Unable to send invitation.';err.classList.remove('hidden');}finally{btn.disabled=false;}};
+}
+
 function download(name,text,type='text/plain'){const blob=new Blob([text],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},0);}
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
 
@@ -260,7 +362,8 @@ async function unlockFieldReady(){
   const password=String($('accessPassword')?.value||'');
   try{
     $('enterBtn').disabled=true;
-    await SYNC.signIn(email,password);
+    const auth=await SYNC.signIn(email,password);
+    setAccountUi(auth?.profile||await SYNC.currentProfile());
     await SYNC.syncNow(db);
     $('safeguard').classList.add('hidden');
     $('accessPassword').value='';
@@ -276,6 +379,7 @@ async function unlockFieldReady(){
 }
 async function lockFieldReady(){
   try{await SYNC?.signOut?.();}catch{}
+  setAccountUi(null);
   $('ackCheck').checked=false;
   $('accessPassword').value='';
   $('safeguard').classList.remove('hidden');
@@ -289,13 +393,27 @@ $('accessPassword').oninput=syncAccessButton;
 $('accessEmail').onkeydown=e=>{if(e.key==='Enter'&&!$('enterBtn').disabled)unlockFieldReady();};
 $('accessPassword').onkeydown=e=>{if(e.key==='Enter'&&!$('enterBtn').disabled)unlockFieldReady();};
 $('enterBtn').onclick=unlockFieldReady;
+$('requestAccountBtn').onclick=openAccountRequest;
 $('lockBtn').onclick=lockFieldReady;
-if(SYNC?.session?.()?.access_token){
-  $('safeguard').classList.add('hidden');
-}else{
+async function restoreAuthorizedSession(){
+ if(!SYNC?.session?.()?.access_token){
+  setAccountUi(null);
   setTimeout(()=>{$('accessEmail')?.focus();syncAccessButton();},50);
+  return;
+ }
+ try{
+  const profile=await SYNC.requireAuthorizedProfile();
+  setAccountUi(profile);
+  $('safeguard').classList.add('hidden');
+ }catch(e){
+  try{await SYNC.signOut();}catch{}
+  setAccountUi(null);
+  $('safeguard').classList.remove('hidden');
+  const err=$('accessError');err.textContent=e?.message||'This account is not authorized for FieldReady.';err.classList.remove('hidden');
+ }
 }
-$('versionBadge').textContent=`v${BUILD.versionName}`;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
+restoreAuthorizedSession();
+$('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
 $('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
 
@@ -317,6 +435,8 @@ window.addEventListener('fieldready:remote-db',e=>{
   renderEvent();
  }else if(activeView==='participantView'&&currentRecordKey){
   renderLongitudinalRecord();
+ }else if(activeView==='adminView'&&currentAccessProfile?.role==='enterprise'){
+  renderAdmin();
  }else{
   renderHome();
  }
