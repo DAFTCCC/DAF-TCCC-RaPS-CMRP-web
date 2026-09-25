@@ -11,7 +11,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const now=()=>Date.now();
 const pct=v=>v==null?'—':`${Math.round(v*100)}%`;
 const fmtMs=ms=>{const s=Math.max(0,Math.floor((ms||0)/1000));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
-const isoDate=()=>new Date().toISOString().slice(0,10);
+const isoDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const deep=x=>JSON.parse(JSON.stringify(x));
 
 const FAILURE_MODES=[
