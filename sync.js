@@ -160,7 +160,7 @@ function omit(o,keys){const x={};Object.entries(o||{}).forEach(([k,v])=>{if(!key
 function flatten(db){
  const events=[],participants=[],evaluations=[],voids=[];
  (db?.events||[]).forEach(e=>{
-  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants'])});
+  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy'])});
   (e.participants||[]).forEach(p=>{
    participants.push({id:p.id,event_id:e.id,participant_code:String(p.participantId||'').trim().toUpperCase(),payload:omit(p,['evaluation','voids'])});
    if(p.evaluation){const v=p.evaluation;evaluations.push({id:v.id,participant_id:p.id,event_id:e.id,finalized_at:v.finalizedAt?new Date(v.finalizedAt).toISOString():null,final_result:v.finalResult||null,app_version:v.appVersion||null,evaluator_id:v.evaluatorId||null,payload:v});}
@@ -171,9 +171,47 @@ function flatten(db){
 }
 async function upsert(table,rows){if(!rows.length)return;await api('/rest/v1/'+table+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});}
 async function getAll(table){return (await api('/rest/v1/'+table+'?select=*',{method:'GET'}))||[];}
-async function push(db,serverEvaluations=[]){const x=flatten(db);const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));await upsert(CFG.tables.events,x.events);await upsert(CFG.tables.participants,x.participants);await upsert(CFG.tables.evaluations,writableEvaluations);await upsert(CFG.tables.voids,x.voids);}
+function evaluatorPushScope(db,x,serverEvents,userId){
+ const localById=new Map((db?.events||[]).map(e=>[e.id,e]));
+ const serverById=new Map((serverEvents||[]).map(e=>[e.id,e]));
+ const accessibleIds=new Set();
+ const writableEventIds=new Set();
+
+ x.events.forEach(r=>{
+  const local=localById.get(r.id)||{};
+  const server=serverById.get(r.id)||null;
+  const locallyOwned=!!userId&&local._syncOwnerId===userId;
+  if(server||locallyOwned)accessibleIds.add(r.id);
+  if(locallyOwned||server?.created_by===userId)writableEventIds.add(r.id);
+ });
+
+ const inAccessibleEvent=r=>accessibleIds.has(r.event_id||r.id);
+ return {
+  events:x.events.filter(r=>writableEventIds.has(r.id)),
+  participants:x.participants.filter(inAccessibleEvent),
+  evaluations:x.evaluations.filter(inAccessibleEvent),
+  voids:x.voids.filter(inAccessibleEvent)
+ };
+}
+async function push(db,serverEvaluations=[],serverEvents=[],profile=null){
+ let x=flatten(db);
+ const userId=session()?.user?.id||null;
+
+ // A plain evaluator may have legacy local data from a different account in
+ // this browser. Never attempt to upsert those hidden events. Evaluators can
+ // push events they created themselves plus participant/evaluation work for
+ // server events RLS already makes visible to them (for example assignments).
+ if(profile?.role==='evaluator')x=evaluatorPushScope(db,x,serverEvents,userId);
+
+ const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));
+ const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));
+ await upsert(CFG.tables.events,x.events);
+ await upsert(CFG.tables.participants,x.participants);
+ await upsert(CFG.tables.evaluations,writableEvaluations);
+ await upsert(CFG.tables.voids,x.voids);
+}
 function rebuild(x,fallback){
- const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,participants:[]}));
+ const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,_serverCreatedBy:r.created_by||null,participants:[]}));
  const pMap=new Map();x.participants.forEach(r=>{const e=eMap.get(r.event_id);if(!e)return;const p={...(r.payload||{}),id:r.id,participantId:(r.payload||{}).participantId||r.participant_code,voids:[],evaluation:null};e.participants.push(p);pMap.set(r.id,p);});
  x.evaluations.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.evaluation={...(r.payload||{}),id:r.id};});
  x.voids.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.voids.push({...(r.payload||{}),id:r.id});});
@@ -189,8 +227,12 @@ async function syncNow(dbArg){
  try{
   const db=dbArg||getDb?.();
   if(!db)throw new Error('No local FieldReady database is available.');
-  const serverEvaluations=await getAll(CFG.tables.evaluations);
-  await push(db,serverEvaluations);
+  const profile=await currentProfile();
+  const [serverEvaluations,serverEvents]=await Promise.all([
+   getAll(CFG.tables.evaluations),
+   getAll(CFG.tables.events)
+  ]);
+  await push(db,serverEvaluations,serverEvents,profile);
   const remote=await pull(db);
 
   // A local edit occurred while this sync was in flight. Do not let the
