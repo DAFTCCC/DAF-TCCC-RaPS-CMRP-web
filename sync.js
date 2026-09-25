@@ -43,9 +43,88 @@ async function signIn(email,password){
  const r=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});
  if(!r?.access_token)throw new Error('No access token returned.');
  setSession({access_token:r.access_token,refresh_token:r.refresh_token,expires_at:r.expires_at,user:r.user?{id:r.user.id,email:r.user.email}:null});
- return session();
+ try{
+  const profile=await requireAuthorizedProfile();
+  return {...session(),profile};
+ }catch(e){
+  await signOut();
+  throw e;
+ }
 }
 async function signOut(){try{if(session()?.access_token)await api('/auth/v1/logout',{method:'POST'});}catch{}setSession(null);}
+
+async function requestAccount({email,password,displayName,majcom,installationId}){
+ if(!configured())throw new Error('FieldReady backend is not configured.');
+ const r=await api('/auth/v1/signup',{
+  method:'POST',
+  body:JSON.stringify({
+   email:String(email||'').trim().toLowerCase(),
+   password:String(password||''),
+   data:{
+    display_name:String(displayName||'').trim(),
+    majcom:String(majcom||'').trim(),
+    installation_id:String(installationId||'').trim()
+   }
+  })
+ });
+ return r;
+}
+
+async function currentProfile(){
+ const s=session();if(!s?.user?.id)return null;
+ const rows=await api('/rest/v1/'+CFG.tables.profiles+'?user_id=eq.'+encodeURIComponent(s.user.id)+'&select=user_id,email,display_name,active,role',{method:'GET'});
+ return rows?.[0]||null;
+}
+
+async function currentAccountRequest(){
+ const s=session();if(!s?.user?.id)return null;
+ const rows=await api('/rest/v1/'+CFG.tables.accountRequests+'?user_id=eq.'+encodeURIComponent(s.user.id)+'&select=id,user_id,email,display_name,requested_role,majcom,installation_id,status,decision_note,created_at,reviewed_at',{method:'GET'});
+ return rows?.[0]||null;
+}
+
+async function requireAuthorizedProfile(){
+ const p=await currentProfile();
+ if(p?.active)return p;
+ let req=null;
+ try{req=await currentAccountRequest();}catch{}
+ if(req?.status==='pending')throw new Error('Your FieldReady account request is pending administrator approval.');
+ if(req?.status==='denied')throw new Error('Your FieldReady account request was denied. Contact the FieldReady administrator.');
+ throw new Error('This account is not authorized for FieldReady.');
+}
+
+async function listAccountAdministration(){
+ const p=await currentProfile();
+ if(!p?.active||p.role!=='enterprise')throw new Error('Enterprise access required.');
+ const [profiles,memberships,requests]=await Promise.all([
+  api('/rest/v1/'+CFG.tables.profiles+'?select=user_id,email,display_name,active,role,created_at,updated_at&order=display_name.asc',{method:'GET'}),
+  api('/rest/v1/'+CFG.tables.memberships+'?select=id,user_id,scope_type,scope_value,created_at',{method:'GET'}),
+  api('/rest/v1/'+CFG.tables.accountRequests+'?select=id,user_id,email,display_name,requested_role,majcom,installation_id,status,decision_note,created_at,reviewed_at&order=created_at.desc',{method:'GET'})
+ ]);
+ return {profiles:profiles||[],memberships:memberships||[],requests:requests||[]};
+}
+
+async function rpc(name,args){
+ return api('/rest/v1/rpc/'+name,{method:'POST',body:JSON.stringify(args||{})});
+}
+
+async function approveAccountRequest(requestId,role,scopeType=null,scopeValue=null){
+ return rpc('fr_approve_account_request',{p_request_id:requestId,p_role:role,p_scope_type:scopeType,p_scope_value:scopeValue});
+}
+async function denyAccountRequest(requestId,note=''){
+ return rpc('fr_deny_account_request',{p_request_id:requestId,p_note:note||null});
+}
+async function setUserAccess(userId,active,role,scopeType=null,scopeValue=null){
+ return rpc('fr_set_user_access',{p_user_id:userId,p_active:!!active,p_role:role,p_scope_type:scopeType,p_scope_value:scopeValue});
+}
+async function inviteUser({email,displayName,role,scopeType=null,scopeValue=null}){
+ const fn=CFG.functions?.accountAdmin;
+ if(!fn)throw new Error('FieldReady account invitation function is not configured.');
+ return api('/functions/v1/'+fn,{
+  method:'POST',
+  body:JSON.stringify({action:'invite',email,displayName,role,scopeType,scopeValue})
+ });
+}
+
 async function ensureSession(){
  const s=session();if(!s?.access_token)return null;
  if(!s.expires_at||Date.now()/1000<Number(s.expires_at)-90)return s;
@@ -128,5 +207,10 @@ function noteLocalChange(){
  timer=setTimeout(()=>syncNow().catch(()=>{}),CFG.autoSyncDelayMs||1500);
 }
 function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token)syncNow().catch(()=>{});});window.addEventListener('offline',renderStatus);}
-window.FieldReadySync=Object.freeze({init,configured,status,renderStatus,session,signIn,signOut,syncNow,noteLocalChange});
+window.FieldReadySync=Object.freeze({
+ init,configured,status,renderStatus,session,signIn,signOut,requestAccount,
+ currentProfile,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
+ approveAccountRequest,denyAccountRequest,setUserAccess,inviteUser,
+ syncNow,noteLocalChange
+});
 })();
