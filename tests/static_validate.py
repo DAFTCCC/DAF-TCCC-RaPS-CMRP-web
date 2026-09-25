@@ -162,6 +162,24 @@ if "activeView=document.querySelector('.view.active')" not in app:
 for required in ["activeView==='evalView'", "renderEvaluation()", "activeView==='eventView'", "renderEvent()"]:
     if required not in app: errors.append(f'Missing active-view sync preservation hook: {required}')
 
+# Account request + enterprise administration workflow.
+migration=(root/'supabase/002_account_administration.sql').read_text(encoding='utf-8') if (root/'supabase/002_account_administration.sql').exists() else ''
+edge=(root/'supabase/functions/fieldready-account-admin/index.ts').read_text(encoding='utf-8') if (root/'supabase/functions/fieldready-account-admin/index.ts').exists() else ''
+for id_ in ['requestAccountBtn','adminBtn','adminView','accountRequestsTable','accountUsersTable','inviteUserBtn']:
+    if f'id="{id_}"' not in html: errors.append(f'Missing account administration DOM id: {id_}')
+for fn in ['openAccountRequest','renderAdmin','openApproveRequest','openManageUser','openInviteUser','handleAuthCallback']:
+    if f'function {fn}' not in app: errors.append(f'Missing account administration function: {fn}')
+for marker in ['fr_account_requests','fr_approve_account_request','fr_deny_account_request','fr_set_user_access']:
+    if marker not in migration: errors.append(f'Missing account administration migration marker: {marker}')
+if 'SUPABASE_SERVICE_ROLE_KEY' not in edge or "role!=='enterprise'" not in edge:
+    errors.append('Secure account invitation function must retain service-role server-side and enforce Enterprise role')
+if 'service_role' in backend.lower():
+    errors.append('backend-config.js must never contain a service-role credential')
+if 'requireAuthorizedProfile' not in sync:
+    errors.append('Sign-in must verify an active FieldReady profile')
+if 'acceptAuthCallback' not in sync or 'updatePassword' not in sync:
+    errors.append('Invite callback/password setup support missing')
+
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
