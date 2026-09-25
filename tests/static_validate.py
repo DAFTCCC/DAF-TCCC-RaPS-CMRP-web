@@ -177,7 +177,10 @@ if "execute function public.fr_audit_row()" in migration:
     errors.append('Account governance migration must not attach the id-only audit trigger to fr_profiles')
 if 'as $\n' in migration or 'do $\n' in migration or '\n$;\n' in migration:
     errors.append('Account migration contains malformed single-dollar SQL quoting')
-for quote in ['$fr_audit
+dollar=chr(36)
+for quote in [f'{dollar}fr_audit{dollar}', f'{dollar}fr_triggers{dollar}']:
+    if migration.count(quote)!=2:
+        errors.append(f'Account migration dollar quote {quote} must appear exactly twice')
 if 'SUPABASE_SERVICE_ROLE_KEY' not in edge or "role!=='enterprise'" not in edge:
     errors.append('Secure account invitation function must retain service-role server-side and enforce Enterprise role')
 if 'service_role' in backend.lower():
