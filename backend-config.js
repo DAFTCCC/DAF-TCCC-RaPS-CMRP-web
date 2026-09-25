@@ -1,7 +1,7 @@
 window.FIELDREADY_BACKEND = Object.freeze({
-  enabled: false,
-  url: 'https://FIELDREADY-BACKEND.example.com',
-  anonKey: 'REPLACE_WITH_FIELDREADY_ANON_KEY',
+  enabled: true,
+  url: 'https://raps-supabase.asuscomm.com/fieldready',
+  anonKey: 'PASTE_YOUR_FIELDREADY_ANON_KEY_HERE',
   auth: Object.freeze({
     sessionKey: 'FIELDREADY_SUPABASE_SESSION_V1'
   }),
