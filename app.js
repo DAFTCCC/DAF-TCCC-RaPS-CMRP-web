@@ -303,9 +303,24 @@ $('syncStatusBtn').onclick=openSyncPanel;
 window.addEventListener('fieldready:remote-db',e=>{
  const remote=normalizeDb(e.detail?.db);
  if(!remote)return;
+
+ const activeView=document.querySelector('.view.active')?.id||'homeView';
+
  db=remote;
  localStorage.setItem(DB_KEY,JSON.stringify(db));
- renderHome();
+
+ // Synchronization must never eject an evaluator from the workflow they are
+ // actively using. Refresh the current screen in place after reconciliation.
+ if(activeView==='evalView'&&event()&&participant()&&getEval()){
+  renderEvaluation();
+ }else if(activeView==='eventView'&&event()){
+  renderEvent();
+ }else if(activeView==='participantView'&&currentRecordKey){
+  renderLongitudinalRecord();
+ }else{
+  renderHome();
+ }
+
  toast('FieldReady server data refreshed.');
 });
 SYNC?.init?.({getDb:()=>db});
