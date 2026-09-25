@@ -145,6 +145,11 @@ if 'FIELDREADY_BACKEND' not in backend: errors.append('backend-config.js missing
 if 'FieldReadySync' not in sync: errors.append('sync.js missing FieldReadySync')
 if 'syncStatusBtn' not in html: errors.append('index.html missing sync status control')
 
+# Service worker must never cache/intercept cross-origin backend API GETs.
+sw_text=(root/'sw.js').read_text(encoding='utf-8') if (root/'sw.js').exists() else ''
+if 'url.origin!==self.location.origin' not in sw_text:
+    errors.append('Service worker must bypass cross-origin backend/API requests')
+
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
