@@ -9,7 +9,13 @@ window.FIELDREADY_BACKEND = Object.freeze({
     events: 'fr_events',
     participants: 'fr_participants',
     evaluations: 'fr_evaluations',
-    voids: 'fr_voids'
+    voids: 'fr_voids',
+    profiles: 'fr_profiles',
+    memberships: 'fr_memberships',
+    accountRequests: 'fr_account_requests'
+  }),
+  functions: Object.freeze({
+    accountAdmin: 'fieldready-account-admin'
   }),
   autoSyncDelayMs: 1500
 });

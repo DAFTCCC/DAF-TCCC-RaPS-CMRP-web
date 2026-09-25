@@ -28,7 +28,10 @@
       <div id="accessError" class="accessError hidden" role="alert">Unable to sign in.</div>
     </div>
     <label class="ack"><input id="ackCheck" type="checkbox"> I am authorized to use this research evaluator and will protect study records.</label>
-    <button id="enterBtn" class="btn primary" disabled>Sign in to FieldReady</button>
+    <div class="accessActions">
+      <button id="enterBtn" class="btn primary" disabled>Sign in to FieldReady</button>
+      <button id="requestAccountBtn" class="btn ghost" type="button">Request evaluator account</button>
+    </div>
   </div>
 </div>
 
@@ -40,6 +43,7 @@
   <div class="topActions">
     <button id="syncStatusBtn" class="syncPill local" type="button" title="Synchronization status">LOCAL ONLY</button>
     <span id="versionBadge" class="versionBadge">v—</span>
+    <button id="adminBtn" class="btn ghost hidden" type="button">Users</button>
     <button id="backupAllBtn" class="btn ghost">Backup</button>
     <button id="restoreBtn" class="btn ghost">Restore</button>
     <button id="lockBtn" class="btn ghost">Lock</button>
@@ -91,6 +95,28 @@
     <section class="panel">
       <div class="panelHead"><div><p class="eyebrow">STUDY EVENTS</p><h2>Events / evaluation classes</h2></div></div>
       <div id="eventsList" class="eventList"></div>
+    </section>
+  </section>
+
+  <section id="adminView" class="view">
+    <button class="backLink" data-home>← Study Dashboard</button>
+    <div class="hero compact">
+      <div>
+        <p class="eyebrow">ENTERPRISE ADMINISTRATION</p>
+        <h1>FieldReady Accounts</h1>
+        <p class="sub">Approve evaluator access requests, invite users, assign roles and scope, or deactivate access without deleting historical study records.</p>
+      </div>
+      <div class="heroBtns"><button id="inviteUserBtn" class="btn primary">+ Invite User</button></div>
+    </div>
+
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">PENDING ACCESS</p><h2>Account requests</h2></div></div>
+      <div id="accountRequestsTable" class="tableWrap"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panelHead"><div><p class="eyebrow">AUTHORIZED USERS</p><h2>FieldReady users</h2></div></div>
+      <div id="accountUsersTable" class="tableWrap"></div>
     </section>
   </section>
 
