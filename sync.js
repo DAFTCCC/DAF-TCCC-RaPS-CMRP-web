@@ -5,6 +5,8 @@ const META_KEY='FIELDREADY_SYNC_META_V1';
 let getDb=null;
 let busy=false;
 let timer=null;
+let changeGeneration=0;
+let rerunAfterBusy=false;
 
 function configured(){return !!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
 function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY))||{pending:0,lastSyncAt:null,lastError:null};}catch{return {pending:0,lastSyncAt:null,lastError:null};}}
@@ -76,14 +78,55 @@ function rebuild(x,fallback){
 }
 async function pull(fallback){const a=await Promise.all([getAll(CFG.tables.events),getAll(CFG.tables.participants),getAll(CFG.tables.evaluations),getAll(CFG.tables.voids)]);return rebuild({events:a[0],participants:a[1],evaluations:a[2],voids:a[3]},fallback);}
 async function syncNow(dbArg){
- if(busy||!configured()||!navigator.onLine)return;
+ if(busy){rerunAfterBusy=true;return;}
+ if(!configured()||!navigator.onLine)return;
  await ensureSession();if(!session()?.access_token){renderStatus();return;}
  busy=true;renderStatus();
- try{const db=dbArg||getDb?.();if(!db)throw new Error('No local FieldReady database is available.');const serverEvaluations=await getAll(CFG.tables.evaluations);await push(db,serverEvaluations);const remote=await pull(db);const m=readMeta();m.pending=0;m.lastError=null;m.lastSyncAt=Date.now();writeMeta(m);window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));}
+ const startedGeneration=changeGeneration;
+ try{
+  const db=dbArg||getDb?.();
+  if(!db)throw new Error('No local FieldReady database is available.');
+  const serverEvaluations=await getAll(CFG.tables.evaluations);
+  await push(db,serverEvaluations);
+  const remote=await pull(db);
+
+  // A local edit occurred while this sync was in flight. Do not let the
+  // older server snapshot overwrite that newer local change. Run again
+  // after the current sync finishes using the latest local database.
+  if(changeGeneration!==startedGeneration){
+   rerunAfterBusy=true;
+   return;
+  }
+
+  const m=readMeta();
+  m.pending=0;
+  m.lastError=null;
+  m.lastSyncAt=Date.now();
+  writeMeta(m);
+  window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));
+ }
  catch(e){const m=readMeta();m.lastError=e?.message||String(e);writeMeta(m);throw e;}
- finally{busy=false;renderStatus();}
+ finally{
+  busy=false;
+  renderStatus();
+  if(rerunAfterBusy){
+   rerunAfterBusy=false;
+   clearTimeout(timer);
+   timer=setTimeout(()=>syncNow().catch(()=>{}),100);
+  }
+ }
 }
-function noteLocalChange(db){const m=readMeta();m.pending=(m.pending||0)+1;m.lastError=null;writeMeta(m);if(!configured()||!navigator.onLine||!session()?.access_token)return;clearTimeout(timer);timer=setTimeout(()=>syncNow(db).catch(()=>{}),CFG.autoSyncDelayMs||1500);}
+function noteLocalChange(){
+ changeGeneration++;
+ const m=readMeta();
+ m.pending=(m.pending||0)+1;
+ m.lastError=null;
+ writeMeta(m);
+ if(!configured()||!navigator.onLine||!session()?.access_token)return;
+ if(busy){rerunAfterBusy=true;return;}
+ clearTimeout(timer);
+ timer=setTimeout(()=>syncNow().catch(()=>{}),CFG.autoSyncDelayMs||1500);
+}
 function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token)syncNow().catch(()=>{});});window.addEventListener('offline',renderStatus);}
 window.FieldReadySync=Object.freeze({init,configured,status,renderStatus,session,signIn,signOut,syncNow,noteLocalChange});
 })();
