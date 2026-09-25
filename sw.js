@@ -1,4 +1,4 @@
-const CACHE='fieldready-study-v4.2.3';
+const CACHE='fieldready-study-v4.2.4';
 
 const ASSETS=[
   './',
@@ -37,6 +37,10 @@ self.addEventListener('fetch',e=>{
   if(e.request.method!=='GET') return;
 
   const url=new URL(e.request.url);
+
+  // Never cache or intercept backend/API requests. Cross-origin FieldReady
+  // Supabase reads must always reach the server so sync cannot reuse stale data.
+  if(url.origin!==self.location.origin) return;
 
   // Always try the current backend configuration first.
   // Use the cached copy only when offline.
