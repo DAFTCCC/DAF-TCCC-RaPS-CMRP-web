@@ -128,13 +128,15 @@ if 'assessment_stopwatch_seconds' not in app: errors.append('Exports missing ass
 if '4.2.0-study-web' not in version: errors.append('version.js not updated to 4.2.0-study-web')
 
 
-# Splash-page password gate.
+# Single FieldReady login gate. Supabase Auth is the only credential check.
 access=(root/'access-config.js').read_text(encoding='utf-8') if (root/'access-config.js').exists() else ''
-for id_ in ['accessPassword','accessError','lockBtn']:
-    if f'id="{id_}"' not in html: errors.append(f'Missing password-gate DOM id: {id_}')
-if 'passwordHashSha256' not in access: errors.append('access-config.js missing passwordHashSha256')
-if 'sha256Hex' not in app or 'unlockFieldReady' not in app: errors.append('app.js missing password verification functions')
-if 'sessionStorage.setItem(ACCESS.sessionKey' not in app: errors.append('Password unlock must be session scoped')
+for id_ in ['accessEmail','accessPassword','accessError','ackCheck','enterBtn','lockBtn']:
+    if f'id="{id_}"' not in html: errors.append(f'Missing login-gate DOM id: {id_}')
+if "mode: 'supabase'" not in access: errors.append('access-config.js must declare Supabase login mode')
+for fn in ['unlockFieldReady','lockFieldReady']:
+    if f'function {fn}' not in app: errors.append(f'Missing login function: {fn}')
+if 'SYNC.signIn(email,password)' not in app: errors.append('Opening login must authenticate with FieldReady Supabase Auth')
+if 'syncLoginForm' in app: errors.append('Separate synchronization login form must not remain')
 
 # Backend foundation hooks.
 backend=(root/'backend-config.js').read_text(encoding='utf-8') if (root/'backend-config.js').exists() else ''
