@@ -53,6 +53,30 @@ async function signIn(email,password){
 }
 async function signOut(){try{if(session()?.access_token)await api('/auth/v1/logout',{method:'POST'});}catch{}setSession(null);}
 
+async function acceptAuthCallback(){
+ const raw=location.hash.startsWith('#')?location.hash.slice(1):'';
+ const q=new URLSearchParams(raw);
+ const type=q.get('type');
+ const access_token=q.get('access_token');
+ const refresh_token=q.get('refresh_token');
+ if(!access_token||!['invite','recovery','signup'].includes(type||''))return null;
+ setSession({
+  access_token,
+  refresh_token:refresh_token||null,
+  expires_at:q.get('expires_at')||((Date.now()/1000)+Number(q.get('expires_in')||3600)),
+  user:null
+ });
+ const user=await api('/auth/v1/user',{method:'GET'});
+ const current=session();
+ setSession({...current,user:user?{id:user.id,email:user.email}:null});
+ history.replaceState(null,document.title,location.pathname+location.search);
+ return {type,user};
+}
+async function updatePassword(password){
+ if(!session()?.access_token)throw new Error('Invitation session is missing or expired.');
+ return api('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:String(password||'')})});
+}
+
 async function requestAccount({email,password,displayName,majcom,installationId}){
  if(!configured())throw new Error('FieldReady backend is not configured.');
  const r=await api('/auth/v1/signup',{
@@ -208,7 +232,7 @@ function noteLocalChange(){
 }
 function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token)syncNow().catch(()=>{});});window.addEventListener('offline',renderStatus);}
 window.FieldReadySync=Object.freeze({
- init,configured,status,renderStatus,session,signIn,signOut,requestAccount,
+ init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
  approveAccountRequest,denyAccountRequest,setUserAccess,inviteUser,
  syncNow,noteLocalChange
