@@ -159,6 +159,12 @@ if 'evaluatorPushScope' not in sync:
     errors.append('Evaluator sync must filter local rows to events visible/owned by that evaluator')
 if "profile?.role==='evaluator'" not in sync:
     errors.append('Evaluator-specific sync isolation guard missing')
+if 'managerPushScope' not in sync:
+    errors.append('Manager sync must filter local rows to the account membership scope')
+if "profile?.role==='program_manager'||profile?.role==='majcom_manager'" not in sync:
+    errors.append('Scoped manager sync isolation guard missing')
+if 'currentMembership' not in sync:
+    errors.append('Scoped manager sync must load the active account membership')
 if "_syncOwnerId" not in app or "_serverCreatedBy" not in sync:
     errors.append('Sync ownership markers required to prevent cross-account event pushes')
 if "omit(e,['participants','_syncOwnerId','_serverCreatedBy'])" not in sync:

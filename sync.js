@@ -99,6 +99,11 @@ async function currentProfile(){
  const rows=await api('/rest/v1/'+CFG.tables.profiles+'?user_id=eq.'+encodeURIComponent(s.user.id)+'&select=user_id,email,display_name,active,role',{method:'GET'});
  return rows?.[0]||null;
 }
+async function currentMembership(){
+ const s=session();if(!s?.user?.id)return null;
+ const rows=await api('/rest/v1/'+CFG.tables.memberships+'?user_id=eq.'+encodeURIComponent(s.user.id)+'&select=id,user_id,scope_type,scope_value,created_at',{method:'GET'});
+ return rows?.[0]||null;
+}
 
 async function currentAccountRequest(){
  const s=session();if(!s?.user?.id)return null;
@@ -193,15 +198,34 @@ function evaluatorPushScope(db,x,serverEvents,userId){
   voids:x.voids.filter(inAccessibleEvent)
  };
 }
-async function push(db,serverEvaluations=[],serverEvents=[],profile=null){
+function managerPushScope(x,profile,membership){
+ const role=profile?.role;
+ const expectedType=role==='program_manager'?'installation':role==='majcom_manager'?'majcom':null;
+ const scopeValue=(expectedType&&membership?.scope_type===expectedType)?String(membership.scope_value||''):''; 
+ if(!scopeValue)return {events:[],participants:[],evaluations:[],voids:[]};
+
+ const allowedIds=new Set(
+  x.events
+   .filter(r=>expectedType==='installation'?r.home_installation_id===scopeValue:r.majcom===scopeValue)
+   .map(r=>r.id)
+ );
+ const inAllowedEvent=r=>allowedIds.has(r.event_id||r.id);
+ return {
+  events:x.events.filter(r=>allowedIds.has(r.id)),
+  participants:x.participants.filter(inAllowedEvent),
+  evaluations:x.evaluations.filter(inAllowedEvent),
+  voids:x.voids.filter(inAllowedEvent)
+ };
+}
+async function push(db,serverEvaluations=[],serverEvents=[],profile=null,membership=null){
  let x=flatten(db);
  const userId=session()?.user?.id||null;
 
- // A plain evaluator may have legacy local data from a different account in
- // this browser. Never attempt to upsert those hidden events. Evaluators can
- // push events they created themselves plus participant/evaluation work for
- // server events RLS already makes visible to them (for example assignments).
+ // Scoped accounts may have stale local events from a previous role/account.
+ // Filter before every push so the client never attempts to write outside the
+ // scope currently granted by FieldReady account governance.
  if(profile?.role==='evaluator')x=evaluatorPushScope(db,x,serverEvents,userId);
+ else if(profile?.role==='program_manager'||profile?.role==='majcom_manager')x=managerPushScope(x,profile,membership);
 
  const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));
  const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));
@@ -228,11 +252,12 @@ async function syncNow(dbArg){
   const db=dbArg||getDb?.();
   if(!db)throw new Error('No local FieldReady database is available.');
   const profile=await currentProfile();
+  const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await currentMembership():null;
   const [serverEvaluations,serverEvents]=await Promise.all([
    getAll(CFG.tables.evaluations),
    getAll(CFG.tables.events)
   ]);
-  await push(db,serverEvaluations,serverEvents,profile);
+  await push(db,serverEvaluations,serverEvents,profile,membership);
   const remote=await pull(db);
 
   // A local edit occurred while this sync was in flight. Do not let the
@@ -275,7 +300,7 @@ function noteLocalChange(){
 function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token)syncNow().catch(()=>{});});window.addEventListener('offline',renderStatus);}
 window.FieldReadySync=Object.freeze({
  init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
- currentProfile,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
+ currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
  approveAccountRequest,denyAccountRequest,setUserAccess,inviteUser,
  syncNow,noteLocalChange
 });
