@@ -171,6 +171,10 @@ for fn in ['openAccountRequest','renderAdmin','openApproveRequest','openManageUs
     if f'function {fn}' not in app: errors.append(f'Missing account administration function: {fn}')
 for marker in ['fr_account_requests','fr_approve_account_request','fr_deny_account_request','fr_set_user_access']:
     if marker not in migration: errors.append(f'Missing account administration migration marker: {marker}')
+if 'fr_audit_governance_row' not in migration:
+    errors.append('Account governance migration must use an audit trigger that supports fr_profiles.user_id keys')
+if "execute function public.fr_audit_row()" in migration:
+    errors.append('Account governance migration must not attach the id-only audit trigger to fr_profiles')
 if 'SUPABASE_SERVICE_ROLE_KEY' not in edge or "role!=='enterprise'" not in edge:
     errors.append('Secure account invitation function must retain service-role server-side and enforce Enterprise role')
 if 'service_role' in backend.lower():
