@@ -297,7 +297,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path=public
-as $
+as $fr_audit$
 declare
   source_row jsonb;
   rid uuid;
@@ -319,16 +319,16 @@ begin
 
   return case when tg_op='DELETE' then old else new end;
 end;
-$;
+$fr_audit$;
 
-do $
+do $fr_triggers$
 declare t text;
 begin
   foreach t in array array['fr_profiles','fr_memberships','fr_account_requests'] loop
     execute format('drop trigger if exists %I_audit on public.%I',t,t);
     execute format('create trigger %I_audit after insert or update or delete on public.%I for each row execute function public.fr_audit_governance_row()',t,t);
   end loop;
-end $;
+end $fr_triggers$;
 
 grant select on public.fr_account_requests to authenticated;
 grant execute on function public.fr_approve_account_request(uuid,text,text,text) to authenticated;

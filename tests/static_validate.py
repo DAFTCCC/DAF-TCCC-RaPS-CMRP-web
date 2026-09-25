@@ -175,6 +175,71 @@ if 'fr_audit_governance_row' not in migration:
     errors.append('Account governance migration must use an audit trigger that supports fr_profiles.user_id keys')
 if "execute function public.fr_audit_row()" in migration:
     errors.append('Account governance migration must not attach the id-only audit trigger to fr_profiles')
+if 'as $\n' in migration or 'do $\n' in migration or '\n$;\n' in migration:
+    errors.append('Account migration contains malformed single-dollar SQL quoting')
+dollar=chr(36)
+for quote in [f'{dollar}fr_audit{dollar}', f'{dollar}fr_triggers{dollar}']:
+    if migration.count(quote)!=2:
+        errors.append(f'Account migration dollar quote {quote} must appear exactly twice')
+if 'SUPABASE_SERVICE_ROLE_KEY' not in edge or "role!=='enterprise'" not in edge:
+    errors.append('Secure account invitation function must retain service-role server-side and enforce Enterprise role')
+if 'service_role' in backend.lower():
+    errors.append('backend-config.js must never contain a service-role credential')
+if 'requireAuthorizedProfile' not in sync:
+    errors.append('Sign-in must verify an active FieldReady profile')
+if 'acceptAuthCallback' not in sync or 'updatePassword' not in sync:
+    errors.append('Invite callback/password setup support missing')
+
+# JS syntax checks.
+for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
+    try:
+        p=subprocess.run(['node','--check',str(root/f)],capture_output=True,text=True)
+        if p.returncode: errors.append(f'JS syntax {f}: {p.stderr.strip()}')
+    except FileNotFoundError:
+        break
+
+if errors:
+    print('STATIC VALIDATION FAILED')
+    for e in errors: print(' -',e)
+    sys.exit(1)
+print('STATIC VALIDATION PASS')
+print(' - exactly 5 failure modes + 5 primary contributors')
+print(' - targeted skill counts and source clocks validated')
+print(' - full RaPS CMC sequence (CMC-001..CMC-123 + MACE2) validated')
+print(' - RaPS CMC clock set validated')
+print(' - universal assessment stopwatches validated')
+print(' - Baseline / 3-Month / 6-Month longitudinal hooks validated')
+,'$fr_triggers
+if 'SUPABASE_SERVICE_ROLE_KEY' not in edge or "role!=='enterprise'" not in edge:
+    errors.append('Secure account invitation function must retain service-role server-side and enforce Enterprise role')
+if 'service_role' in backend.lower():
+    errors.append('backend-config.js must never contain a service-role credential')
+if 'requireAuthorizedProfile' not in sync:
+    errors.append('Sign-in must verify an active FieldReady profile')
+if 'acceptAuthCallback' not in sync or 'updatePassword' not in sync:
+    errors.append('Invite callback/password setup support missing')
+
+# JS syntax checks.
+for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
+    try:
+        p=subprocess.run(['node','--check',str(root/f)],capture_output=True,text=True)
+        if p.returncode: errors.append(f'JS syntax {f}: {p.stderr.strip()}')
+    except FileNotFoundError:
+        break
+
+if errors:
+    print('STATIC VALIDATION FAILED')
+    for e in errors: print(' -',e)
+    sys.exit(1)
+print('STATIC VALIDATION PASS')
+print(' - exactly 5 failure modes + 5 primary contributors')
+print(' - targeted skill counts and source clocks validated')
+print(' - full RaPS CMC sequence (CMC-001..CMC-123 + MACE2) validated')
+print(' - RaPS CMC clock set validated')
+print(' - universal assessment stopwatches validated')
+print(' - Baseline / 3-Month / 6-Month longitudinal hooks validated')
+]:
+    if migration.count(quote)!=2: errors.append(f'Account migration dollar quote {quote} must appear exactly twice')
 if 'SUPABASE_SERVICE_ROLE_KEY' not in edge or "role!=='enterprise'" not in edge:
     errors.append('Secure account invitation function must retain service-role server-side and enforce Enterprise role')
 if 'service_role' in backend.lower():
