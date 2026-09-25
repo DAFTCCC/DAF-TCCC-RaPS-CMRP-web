@@ -155,6 +155,14 @@ if 'changeGeneration' not in sync or 'rerunAfterBusy' not in sync:
     errors.append('sync.js missing in-flight local-change protection')
 if 'if(changeGeneration!==startedGeneration)' not in sync:
     errors.append('sync.js must reject stale pull snapshots after concurrent local edits')
+if 'evaluatorPushScope' not in sync:
+    errors.append('Evaluator sync must filter local rows to events visible/owned by that evaluator')
+if "profile?.role==='evaluator'" not in sync:
+    errors.append('Evaluator-specific sync isolation guard missing')
+if "_syncOwnerId" not in app or "_serverCreatedBy" not in sync:
+    errors.append('Sync ownership markers required to prevent cross-account event pushes')
+if "omit(e,['participants','_syncOwnerId','_serverCreatedBy'])" not in sync:
+    errors.append('Sync-only ownership metadata must never be persisted in event payloads')
 
 # Remote sync must preserve the evaluator's active workflow instead of forcing Home.
 if "activeView=document.querySelector('.view.active')" not in app:
