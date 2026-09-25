@@ -226,44 +226,75 @@ function openSyncPanel(){
   return;
  }
  if(!sess?.access_token){
-  openModal('Sign in to FieldReady',`<p>Use your FieldReady study account. Credentials are sent only to the configured NUC-hosted Supabase Auth endpoint.</p><form id="syncLoginForm"><div class="formGrid"><label class="full"><span>Email</span><input name="email" type="email" autocomplete="username" required></label><label class="full"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Sign in & sync</button></div><div id="syncLoginError" class="accessError hidden"></div></form>`);
-  $('syncLoginForm').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.target),err=$('syncLoginError');err.classList.add('hidden');try{await SYNC.signIn(String(fd.get('email')||'').trim(),String(fd.get('password')||''));await SYNC.syncNow(db);closeModal();toast('FieldReady synchronized.');renderHome();}catch(x){err.textContent=x.message||String(x);err.classList.remove('hidden');}};
+  closeModal();
+  $('safeguard').classList.remove('hidden');
+  $('accessError').textContent='Your FieldReady session ended. Sign in again.';
+  $('accessError').classList.remove('hidden');
+  syncAccessButton();
+  setTimeout(()=>$('accessEmail')?.focus(),50);
   return;
  }
  openModal('FieldReady synchronization',`<div class="reviewBox"><b>${esc(s.label)}</b><p>${esc(s.detail)}</p></div><p>Signed in as <b>${esc(sess.user?.email||'FieldReady user')}</b>.</p><div class="actionsRow"><button id="syncNowBtn" class="btn primary">Sync now</button><button id="syncSignOutBtn" class="btn ghost">Sign out</button></div>`);
  $('syncNowBtn').onclick=async()=>{try{await SYNC.syncNow(db);closeModal();toast('FieldReady synchronized.');renderHome();}catch(x){alert('Sync failed: '+(x.message||x));}};
- $('syncSignOutBtn').onclick=async()=>{await SYNC.signOut();closeModal();toast('FieldReady signed out.');};
+ $('syncSignOutBtn').onclick=async()=>{closeModal();await lockFieldReady();};
 }
 function backupAll(){download(`FieldReady_Backup_${isoDate()}.json`,JSON.stringify(db,null,2),'application/json');}
 function restoreAll(file){const r=new FileReader();r.onload=()=>{try{const x=normalizeDb(JSON.parse(r.result));if(!x)throw new Error('Invalid backup');if(!confirm(`Restore ${x.events.length} study event(s)? This replaces current local data.`))return;db=x;saveDb();renderHome();toast('Backup restored.');}catch(err){alert(`Restore failed: ${err.message}`);}};r.readAsText(file);}
 
-const ACCESS=window.FIELDREADY_ACCESS||{enabled:false,sessionKey:'FIELDREADY_AUTH'};
-function syncAccessButton(){const ack=$('ackCheck').checked;const pw=($('accessPassword')?.value||'').trim();$('enterBtn').disabled=!ack||(ACCESS.enabled&&!pw);}
-async function sha256Hex(value){
-  if(!globalThis.crypto?.subtle) throw new Error('Secure password verification is unavailable in this browser.');
-  const data=new TextEncoder().encode(value);
-  const digest=await crypto.subtle.digest('SHA-256',data);
-  return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+function syncAccessButton(){
+  const ack=$('ackCheck').checked;
+  const email=String($('accessEmail')?.value||'').trim();
+  const pw=String($('accessPassword')?.value||'');
+  $('enterBtn').disabled=!ack||!email||!pw||!SYNC?.configured?.();
 }
 async function unlockFieldReady(){
-  const err=$('accessError'); err?.classList.add('hidden');
+  const err=$('accessError');
+  err?.classList.add('hidden');
   if(!$('ackCheck').checked){syncAccessButton();return;}
-  if(ACCESS.enabled){
-    try{
-      const supplied=await sha256Hex($('accessPassword').value);
-      if(supplied!==ACCESS.passwordHashSha256){err.textContent='Incorrect password.';err.classList.remove('hidden');$('accessPassword').select();return;}
-    }catch(e){err.textContent=e.message||'Unable to verify password.';err.classList.remove('hidden');return;}
+  if(!SYNC?.configured?.()){
+    err.textContent='FieldReady backend is not configured.';
+    err.classList.remove('hidden');
+    return;
   }
-  sessionStorage.setItem(ACCESS.sessionKey,'1');
-  $('safeguard').classList.add('hidden');
+  const email=String($('accessEmail')?.value||'').trim();
+  const password=String($('accessPassword')?.value||'');
+  try{
+    $('enterBtn').disabled=true;
+    await SYNC.signIn(email,password);
+    await SYNC.syncNow(db);
+    $('safeguard').classList.add('hidden');
+    $('accessPassword').value='';
+    renderHome();
+    toast('Signed in and synchronized.');
+  }catch(e){
+    err.textContent=e?.message||'Unable to sign in.';
+    err.classList.remove('hidden');
+    $('accessPassword').select();
+  }finally{
+    syncAccessButton();
+  }
+}
+async function lockFieldReady(){
+  try{await SYNC?.signOut?.();}catch{}
+  $('ackCheck').checked=false;
   $('accessPassword').value='';
+  $('safeguard').classList.remove('hidden');
+  syncAccessButton();
+  setTimeout(()=>$('accessEmail')?.focus(),50);
+  toast('FieldReady signed out.');
 }
 $('ackCheck').onchange=syncAccessButton;
+$('accessEmail').oninput=syncAccessButton;
 $('accessPassword').oninput=syncAccessButton;
+$('accessEmail').onkeydown=e=>{if(e.key==='Enter'&&!$('enterBtn').disabled)unlockFieldReady();};
 $('accessPassword').onkeydown=e=>{if(e.key==='Enter'&&!$('enterBtn').disabled)unlockFieldReady();};
 $('enterBtn').onclick=unlockFieldReady;
-$('lockBtn').onclick=()=>{sessionStorage.removeItem(ACCESS.sessionKey);$('ackCheck').checked=false;$('accessPassword').value='';syncAccessButton();$('safeguard').classList.remove('hidden');setTimeout(()=>$('accessPassword').focus(),50);};
-if(sessionStorage.getItem(ACCESS.sessionKey)==='1')$('safeguard').classList.add('hidden'); else setTimeout(()=>{$('accessPassword')?.focus();syncAccessButton();},50);
+$('lockBtn').onclick=lockFieldReady;
+if(SYNC?.session?.()?.access_token){
+  $('safeguard').classList.add('hidden');
+}else{
+  setTimeout(()=>{$('accessEmail')?.focus();syncAccessButton();},50);
+}
 $('versionBadge').textContent=`v${BUILD.versionName}`;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
 $('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
