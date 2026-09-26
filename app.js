@@ -33,7 +33,7 @@ let db=loadDb();
 let currentEventId=null,currentParticipantId=null,currentSection=0,currentRecordKey='',currentRecordSkill='',recordCriterionFilter='all';
 let filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};
 let ticker=null;
-let currentAccessProfile=null;
+let currentAccessProfile=null,currentAccessMembership=null;
 
 function scopeOptions(role,majcom='',installationId=''){
  if(role==='majcom_manager'){
@@ -44,10 +44,17 @@ function scopeOptions(role,majcom='',installationId=''){
  }
  return '';
 }
-function setAccountUi(profile){
+function setAccountUi(profile,membership=null){
  currentAccessProfile=profile||null;
+ currentAccessMembership=membership||null;
  const admin=$('adminBtn');
  if(admin)admin.classList.toggle('hidden',profile?.role!=='enterprise');
+}
+function accountEventScope(){
+ const role=currentAccessProfile?.role||'';
+ if(role==='program_manager'&&currentAccessMembership?.scope_type==='installation')return {role,installationId:currentAccessMembership.scope_value||''};
+ if(role==='majcom_manager'&&currentAccessMembership?.scope_type==='majcom')return {role,majcom:currentAccessMembership.scope_value||''};
+ return {role};
 }
 
 function defaultDb(){return {schemaVersion:5,appVersion:BUILD.versionName,events:[]};}
@@ -249,7 +256,9 @@ function exportLongitudinalRecord(){const rows=recordRows(),headers=['participan
 function renderEvents(){const es=db.events.filter(e=>!e.deletedAt).sort((a,b)=>String(b.date).localeCompare(String(a.date)));$('eventsList').innerHTML=es.length?es.map(e=>{const finals=e.participants.filter(p=>p.evaluation?.finalizedAt).length;return `<div class="eventCard" data-event="${e.id}"><div><h3>${esc(e.name)}</h3><div class="eventMetaLine">${esc(SKILLS[e.skillId]?.shortName||e.skillId)} · ${esc(e.studyArm)} · ${esc(e.timepoint)} · ${esc(commandName(e.majcom))} · ${esc(eventHomeName(e))}</div></div><div><span class="status">${finals}/${e.participants.length} finalized</span></div></div>`;}).join(''):'<div class="empty">No study events yet. Create an event for a skill, timepoint, study arm, MAJCOM, and installation.</div>';document.querySelectorAll('[data-event]').forEach(x=>x.onclick=()=>openEvent(x.dataset.event));}
 
 function showEventForm(existing=null){
- const commands=LOC.commands.map(c=>`<option value="${c.id}" ${(existing?.majcom||'')===c.id?'selected':''}>${esc(c.name)}</option>`).join('');const skills=Object.values(SKILLS).map(s=>`<option value="${s.id}" ${(existing?.skillId||'CMC')===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+ const scope=accountEventScope();
+ const allowedCommands=scope.role==='majcom_manager'?LOC.commands.filter(c=>c.id===scope.majcom):LOC.commands;
+ const commands=allowedCommands.map(c=>`<option value="${c.id}" ${(existing?.majcom||scope.majcom||'')===c.id?'selected':''}>${esc(c.name)}</option>`).join('');const skills=Object.values(SKILLS).map(s=>`<option value="${s.id}" ${(existing?.skillId||'CMC')===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
  openModal(existing?'Edit Study Event':'New Study Event',`<form id="eventForm"><div class="formGrid">
  <label><span>Event / class name *</span><input name="name" required value="${esc(existing?.name||'')}"></label><label><span>Date *</span><input name="date" type="date" required value="${esc(existing?.date||isoDate())}"></label>
  <label><span>Skill / assessment *</span><select name="skillId" ${existing?'disabled':''}>${skills}</select></label><label><span>Event type</span><select name="eventType"><option value="study" ${existing?.eventType!=='calibration'?'selected':''}>Study measurement</option><option value="calibration" ${existing?.eventType==='calibration'?'selected':''}>Evaluator calibration</option></select></label>
@@ -263,7 +272,9 @@ function showEventForm(existing=null){
  <label class="full"><span>Study / scenario notes</span><textarea name="notes" rows="2">${esc(existing?.notes||'')}</textarea></label>
  </div><div class="actionsRow spaced"><button class="btn primary" type="submit">${existing?'Save Event':'Create Event'}</button></div></form>`);
  const f=$('eventForm');f.elements.timepoint.value=existing?.timepoint||'baseline';f.elements.studyArm.value=existing?.studyArm||'Control';
- function fillBases(){const maj=f.elements.majcom.value;const list=LOC.installations.filter(i=>i.active!==false&&(!maj||(i.commands||[]).includes(maj))).sort((a,b)=>a.name.localeCompare(b.name));f.elements.homeInstallationId.innerHTML='<option value="">Select installation</option>'+list.map(i=>`<option value="${i.id}">${esc(installationLabel(i))}</option>`).join('')+'<option value="__OTHER__">Other / expeditionary / not listed</option>';if(existing?.homeInstallationId&&list.some(i=>i.id===existing.homeInstallationId))f.elements.homeInstallationId.value=existing.homeInstallationId;}
+ function fillBases(){const maj=f.elements.majcom.value;let list=LOC.installations.filter(i=>i.active!==false&&(!maj||(i.commands||[]).includes(maj)));if(scope.role==='program_manager')list=list.filter(i=>i.id===scope.installationId);list=list.sort((a,b)=>a.name.localeCompare(b.name));f.elements.homeInstallationId.innerHTML='<option value="">Select installation</option>'+list.map(i=>`<option value="${i.id}">${esc(installationLabel(i))}</option>`).join('')+(scope.role==='program_manager'||scope.role==='majcom_manager'?'':'<option value="__OTHER__">Other / expeditionary / not listed</option>');if(existing?.homeInstallationId&&list.some(i=>i.id===existing.homeInstallationId))f.elements.homeInstallationId.value=existing.homeInstallationId;else if(scope.role==='program_manager'&&scope.installationId&&list.some(i=>i.id===scope.installationId))f.elements.homeInstallationId.value=scope.installationId;}
+ if(scope.role==='program_manager'){const inst=installation(scope.installationId);if(inst){const command=(inst.commands||[])[0]||inst.hostCommand||'';if(command)f.elements.majcom.value=command;f.elements.majcom.disabled=true;}}
+ if(scope.role==='majcom_manager'){f.elements.majcom.value=scope.majcom||'';f.elements.majcom.disabled=true;}
  f.elements.majcom.onchange=fillBases;fillBases();
  f.onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f).entries());if(d.homeInstallationId==='__OTHER__'){const custom=prompt('Enter home installation / location name:');if(!custom)return;d.homeInstallationName=custom;d.homeInstallationId='';}else d.homeInstallationName=installation(d.homeInstallationId)?.name||'';d.trainingLocation=String(d.trainingLocation||'').trim()||d.homeInstallationName;d.skillId=existing?.skillId||d.skillId;if(existing){Object.assign(existing,d);saveDb();closeModal();renderEvent();renderHomeSilently();}else{const ev={id:uuid(),...d,createdAt:now(),_syncOwnerId:SYNC?.session?.()?.user?.id||null,participants:[]};db.events.push(ev);saveDb();closeModal();openEvent(ev.id);}};
 }
@@ -349,6 +360,12 @@ function syncAccessButton(){
   const pw=String($('accessPassword')?.value||'');
   $('enterBtn').disabled=!ack||!email||!pw||!SYNC?.configured?.();
 }
+async function loadCurrentAccess(){
+ const profile=await SYNC.currentProfile();
+ const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await SYNC.currentMembership():null;
+ setAccountUi(profile,membership);
+ return {profile,membership};
+}
 async function unlockFieldReady(){
   const err=$('accessError');
   err?.classList.add('hidden');
@@ -362,8 +379,8 @@ async function unlockFieldReady(){
   const password=String($('accessPassword')?.value||'');
   try{
     $('enterBtn').disabled=true;
-    const auth=await SYNC.signIn(email,password);
-    setAccountUi(auth?.profile||await SYNC.currentProfile());
+    await SYNC.signIn(email,password);
+    await loadCurrentAccess();
     await SYNC.syncNow(db);
     $('safeguard').classList.add('hidden');
     $('accessPassword').value='';
@@ -379,7 +396,7 @@ async function unlockFieldReady(){
 }
 async function lockFieldReady(){
   try{await SYNC?.signOut?.();}catch{}
-  setAccountUi(null);
+  setAccountUi(null,null);
   $('ackCheck').checked=false;
   $('accessPassword').value='';
   $('safeguard').classList.remove('hidden');
@@ -449,8 +466,8 @@ async function restoreAuthorizedSession(){
   return;
  }
  try{
-  const profile=await SYNC.requireAuthorizedProfile();
-  setAccountUi(profile);
+  await SYNC.requireAuthorizedProfile();
+  await loadCurrentAccess();
   $('safeguard').classList.add('hidden');
  }catch(e){
   try{await SYNC.signOut();}catch{}
