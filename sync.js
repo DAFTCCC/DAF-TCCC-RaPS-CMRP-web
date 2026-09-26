@@ -145,6 +145,8 @@ async function denyAccountRequest(requestId,note=''){
 async function setUserAccess(userId,active,role,scopeType=null,scopeValue=null){
  return rpc('fr_set_user_access',{p_user_id:userId,p_active:!!active,p_role:role,p_scope_type:scopeType,p_scope_value:scopeValue});
 }
+async function closeEvent(eventId,csv,fileName){return rpc('fr_close_event',{p_event_id:eventId,p_csv:csv,p_file_name:fileName});}
+async function deleteEvent(eventId){return rpc('fr_delete_event',{p_event_id:eventId});}
 async function inviteUser({email,displayName,role,scopeType=null,scopeValue=null}){
  const fn=CFG.functions?.accountAdmin;
  if(!fn)throw new Error('FieldReady account invitation function is not configured.');
@@ -165,7 +167,7 @@ function omit(o,keys){const x={};Object.entries(o||{}).forEach(([k,v])=>{if(!key
 function flatten(db){
  const events=[],participants=[],evaluations=[],voids=[];
  (db?.events||[]).forEach(e=>{
-  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent']),_syncOwnerId:e._syncOwnerId||null,_serverCreatedBy:e._serverCreatedBy||null,_syncDirtyEvent:!!e._syncDirtyEvent});
+  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,closed_at:e.closedAt?new Date(e.closedAt).toISOString():null,closed_by:e.closedBy||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent','closedAt','closedBy','deletedAt']),_syncOwnerId:e._syncOwnerId||null,_serverCreatedBy:e._serverCreatedBy||null,_syncDirtyEvent:!!e._syncDirtyEvent});
   (e.participants||[]).forEach(p=>{
    participants.push({id:p.id,event_id:e.id,participant_code:String(p.participantId||'').trim().toUpperCase(),payload:omit(p,['evaluation','voids'])});
    if(p.evaluation){const v=p.evaluation;evaluations.push({id:v.id,participant_id:p.id,event_id:e.id,finalized_at:v.finalizedAt?new Date(v.finalizedAt).toISOString():null,final_result:v.finalResult||null,app_version:v.appVersion||null,evaluator_id:v.evaluatorId||null,payload:v});}
@@ -264,7 +266,7 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  await upsert(CFG.tables.voids,x.voids);
 }
 function rebuild(x,fallback){
- const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,_serverCreatedBy:r.created_by||null,_syncDirtyEvent:false,participants:[]}));
+ const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,closedAt:r.closed_at?Date.parse(r.closed_at):null,closedBy:r.closed_by||null,deletedAt:r.deleted_at?Date.parse(r.deleted_at):null,_serverCreatedBy:r.created_by||null,_syncDirtyEvent:false,participants:[]}));
  const pMap=new Map();x.participants.forEach(r=>{const e=eMap.get(r.event_id);if(!e)return;const p={...(r.payload||{}),id:r.id,participantId:(r.payload||{}).participantId||r.participant_code,voids:[],evaluation:null};e.participants.push(p);pMap.set(r.id,p);});
  x.evaluations.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.evaluation={...(r.payload||{}),id:r.id};});
  x.voids.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.voids.push({...(r.payload||{}),id:r.id});});
@@ -330,7 +332,7 @@ function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventLis
 window.FieldReadySync=Object.freeze({
  init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
- approveAccountRequest,denyAccountRequest,setUserAccess,inviteUser,
+ approveAccountRequest,denyAccountRequest,setUserAccess,closeEvent,deleteEvent,inviteUser,
  syncNow,noteLocalChange
 });
 })();
