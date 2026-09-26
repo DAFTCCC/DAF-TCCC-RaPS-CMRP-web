@@ -107,8 +107,17 @@ create trigger fr_participants_touch_revision before update on public.fr_partici
 drop trigger if exists fr_evaluations_touch_revision on public.fr_evaluations;
 create trigger fr_evaluations_touch_revision before update on public.fr_evaluations for each row execute function public.fr_touch_revision();
 
-create or replace function public.fr_block_finalized_evaluation_mutation() returns trigger language plpgsql as $$
-begin if old.finalized_at is not null then raise exception 'Finalized FieldReady evaluations are immutable. Use controlled correction/retest.'; end if; return new; end; $$;
+create or replace function public.fr_block_finalized_evaluation_mutation() returns trigger language plpgsql as $
+begin
+  if old.finalized_at is not null then
+    raise exception 'Finalized FieldReady evaluations are immutable. Use controlled correction/retest.';
+  end if;
+  if tg_op='DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$;
 drop trigger if exists fr_evaluations_lock_finalized on public.fr_evaluations;
 create trigger fr_evaluations_lock_finalized before update or delete on public.fr_evaluations for each row execute function public.fr_block_finalized_evaluation_mutation();
 
