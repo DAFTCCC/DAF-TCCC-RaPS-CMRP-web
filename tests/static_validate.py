@@ -189,6 +189,7 @@ for required in ["activeView==='evalView'", "renderEvaluation()", "activeView===
 # Account request + enterprise administration workflow.
 migration=(root/'supabase/002_account_administration.sql').read_text(encoding='utf-8') if (root/'supabase/002_account_administration.sql').exists() else ''
 event_scope=(root/'supabase/003_event_scope_hardening.sql').read_text(encoding='utf-8') if (root/'supabase/003_event_scope_hardening.sql').exists() else ''
+evaluator_scope=(root/'supabase/004_evaluator_assignment_only.sql').read_text(encoding='utf-8') if (root/'supabase/004_evaluator_assignment_only.sql').exists() else ''
 edge=(root/'supabase/functions/fieldready-account-admin/index.ts').read_text(encoding='utf-8') if (root/'supabase/functions/fieldready-account-admin/index.ts').exists() else ''
 for id_ in ['requestAccountBtn','adminBtn','adminView','accountRequestsTable','accountUsersTable','inviteUserBtn']:
     if f'id="{id_}"' not in html: errors.append(f'Missing account administration DOM id: {id_}')
@@ -224,6 +225,17 @@ if "scope.role==='program_manager'" not in app or "scope.role==='majcom_manager'
     errors.append('Event form missing Program/MAJCOM Manager scope restrictions')
 if "scopedInstallation?.commands" not in app:
     errors.append('Program Manager event form must allow only commands valid for the scoped installation')
+if "currentAccessProfile?.role==='evaluator'" not in app:
+    errors.append('Evaluator UI must block event creation/editing')
+if "const canManageEvents=['program_manager','majcom_manager','enterprise'].includes(role)" not in app:
+    errors.append('Event management controls must be limited to manager/enterprise roles')
+if "events:[]" not in sync:
+    errors.append('Evaluator sync must never write fr_events')
+if "p.role='evaluator' and p_created_by=auth.uid()" in evaluator_scope:
+    errors.append('Evaluator assignment-only migration must remove creator-based event management')
+for marker in ["insert into public.fr_event_evaluators(event_id,user_id)","p.role='evaluator'","fr_can_manage_event_scope","fr_can_access_event"]:
+    if marker not in evaluator_scope:
+        errors.append(f'Evaluator assignment-only migration missing {marker}')
 
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:

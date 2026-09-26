@@ -185,22 +185,19 @@ async function patchRowsById(table,rows){
 async function upsert(table,rows){if(!rows.length)return;await api('/rest/v1/'+table+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});}
 async function getAll(table){return (await api('/rest/v1/'+table+'?select=*',{method:'GET'}))||[];}
 function evaluatorPushScope(db,x,serverEvents,userId){
- const localById=new Map((db?.events||[]).map(e=>[e.id,e]));
- const serverById=new Map((serverEvents||[]).map(e=>[e.id,e]));
- const accessibleIds=new Set();
- const writableEventIds=new Set();
-
- x.events.forEach(r=>{
-  const local=localById.get(r.id)||{};
-  const server=serverById.get(r.id)||null;
-  const locallyOwned=!!userId&&local._syncOwnerId===userId;
-  if(server||locallyOwned)accessibleIds.add(r.id);
-  if(locallyOwned||server?.created_by===userId)writableEventIds.add(r.id);
- });
-
+ const serverIds=new Set((serverEvents||[]).map(e=>e.id));
+ const accessibleIds=new Set(
+  x.events
+   .filter(r=>serverIds.has(r.id))
+   .map(r=>r.id)
+ );
  const inAccessibleEvent=r=>accessibleIds.has(r.event_id||r.id);
+
+ // Evaluators are assignment-scoped. They may grade/update participant-level
+ // data for assigned events returned by RLS, but never create or edit event
+ // metadata themselves.
  return {
-  events:x.events.filter(r=>writableEventIds.has(r.id)),
+  events:[],
   participants:x.participants.filter(inAccessibleEvent),
   evaluations:x.evaluations.filter(inAccessibleEvent),
   voids:x.voids.filter(inAccessibleEvent)

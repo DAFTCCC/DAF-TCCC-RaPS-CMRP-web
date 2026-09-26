@@ -47,8 +47,14 @@ function scopeOptions(role,majcom='',installationId=''){
 function setAccountUi(profile,membership=null){
  currentAccessProfile=profile||null;
  currentAccessMembership=membership||null;
+ const role=profile?.role||'';
  const admin=$('adminBtn');
- if(admin)admin.classList.toggle('hidden',profile?.role!=='enterprise');
+ if(admin)admin.classList.toggle('hidden',role!=='enterprise');
+ const canManageEvents=['program_manager','majcom_manager','enterprise'].includes(role);
+ const newEvent=$('newEventBtn');
+ const editEvent=$('editEventBtn');
+ if(newEvent)newEvent.classList.toggle('hidden',!canManageEvents);
+ if(editEvent)editEvent.classList.toggle('hidden',!canManageEvents);
 }
 function accountEventScope(){
  const role=currentAccessProfile?.role||'';
@@ -256,6 +262,7 @@ function exportLongitudinalRecord(){const rows=recordRows(),headers=['participan
 function renderEvents(){const es=db.events.filter(e=>!e.deletedAt).sort((a,b)=>String(b.date).localeCompare(String(a.date)));$('eventsList').innerHTML=es.length?es.map(e=>{const finals=e.participants.filter(p=>p.evaluation?.finalizedAt).length;return `<div class="eventCard" data-event="${e.id}"><div><h3>${esc(e.name)}</h3><div class="eventMetaLine">${esc(SKILLS[e.skillId]?.shortName||e.skillId)} · ${esc(e.studyArm)} · ${esc(e.timepoint)} · ${esc(commandName(e.majcom))} · ${esc(eventHomeName(e))}</div></div><div><span class="status">${finals}/${e.participants.length} finalized</span></div></div>`;}).join(''):'<div class="empty">No study events yet. Create an event for a skill, timepoint, study arm, MAJCOM, and installation.</div>';document.querySelectorAll('[data-event]').forEach(x=>x.onclick=()=>openEvent(x.dataset.event));}
 
 function showEventForm(existing=null){
+ if(currentAccessProfile?.role==='evaluator'){toast('Evaluators can grade assigned events but cannot create or edit study events.');return;}
  const scope=accountEventScope();
  const scopedInstallation=scope.role==='program_manager'?installation(scope.installationId):null;
  const allowedCommands=scope.role==='program_manager'
