@@ -178,6 +178,7 @@ for required in ["activeView==='evalView'", "renderEvaluation()", "activeView===
 
 # Account request + enterprise administration workflow.
 migration=(root/'supabase/002_account_administration.sql').read_text(encoding='utf-8') if (root/'supabase/002_account_administration.sql').exists() else ''
+event_scope=(root/'supabase/003_event_scope_hardening.sql').read_text(encoding='utf-8') if (root/'supabase/003_event_scope_hardening.sql').exists() else ''
 edge=(root/'supabase/functions/fieldready-account-admin/index.ts').read_text(encoding='utf-8') if (root/'supabase/functions/fieldready-account-admin/index.ts').exists() else ''
 for id_ in ['requestAccountBtn','adminBtn','adminView','accountRequestsTable','accountUsersTable','inviteUserBtn']:
     if f'id="{id_}"' not in html: errors.append(f'Missing account administration DOM id: {id_}')
@@ -203,6 +204,14 @@ if 'requireAuthorizedProfile' not in sync:
     errors.append('Sign-in must verify an active FieldReady profile')
 if 'acceptAuthCallback' not in sync or 'updatePassword' not in sync:
     errors.append('Invite callback/password setup support missing')
+if 'fr_can_manage_event_scope' not in event_scope:
+    errors.append('Event scope hardening migration missing role-aware event scope function')
+for marker in ['fr_events_read','fr_events_insert','fr_events_update','fr_events_lock_creator']:
+    if marker not in event_scope: errors.append(f'Event scope hardening migration missing {marker}')
+if 'accountEventScope' not in app or 'currentAccessMembership' not in app:
+    errors.append('Event form must load and enforce current manager membership scope')
+if "scope.role==='program_manager'" not in app or "scope.role==='majcom_manager'" not in app:
+    errors.append('Event form missing Program/MAJCOM Manager scope restrictions')
 
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
