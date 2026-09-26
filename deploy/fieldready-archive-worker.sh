@@ -10,12 +10,11 @@ docker exec "$DB_CONTAINER" psql -U postgres -d postgres -At -F $'\t' -P pager=o
 SELECT
   event_id::text,
   archive_month,
-  file_name,
-  encode(convert_to(csv_text,'UTF8'),'base64')
+  file_name
 FROM public.fr_event_archives
 WHERE persisted_at IS NULL
 ORDER BY closed_at, event_id;
-" | while IFS=$'\t' read -r event_id archive_month file_name csv_b64; do
+" | while IFS=$'\t' read -r event_id archive_month file_name; do
   [ -n "$event_id" ] || continue
 
   case "$archive_month" in
@@ -33,7 +32,18 @@ ORDER BY closed_at, event_id;
   tmp_path="$month_dir/.$file_name.$event_id.tmp"
 
   mkdir -p "$month_dir"
-  printf '%s' "$csv_b64" | base64 -d > "$tmp_path"
+
+  docker exec "$DB_CONTAINER" psql -U postgres -d postgres -At -P pager=off -c "
+SELECT encode(convert_to(csv_text,'UTF8'),'hex')
+FROM public.fr_event_archives
+WHERE event_id='$event_id'::uuid;
+" | python3 -c 'import sys; data=sys.stdin.read().strip(); sys.stdout.buffer.write(bytes.fromhex(data))' > "$tmp_path"
+
+  if [ ! -s "$tmp_path" ]; then
+    echo "Archive CSV decode produced an empty file for $event_id" >&2
+    rm -f "$tmp_path"
+    exit 1
+  fi
 
   if [ -e "$final_path" ]; then
     existing_sha="$(sha256sum "$final_path" | awk '{print $1}')"
@@ -47,12 +57,14 @@ ORDER BY closed_at, event_id;
   chmod 0640 "$final_path"
   sha="$(sha256sum "$final_path" | awk '{print $1}')"
 
-  docker exec "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -P pager=off     -c "UPDATE public.fr_event_archives
-        SET persisted_at=clock_timestamp(),
-            persisted_path='$final_path',
-            persisted_sha256='$sha'
-        WHERE event_id='$event_id'::uuid
-          AND persisted_at IS NULL;" >/dev/null
+  docker exec "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -P pager=off -c "
+UPDATE public.fr_event_archives
+SET persisted_at=clock_timestamp(),
+    persisted_path='$final_path',
+    persisted_sha256='$sha'
+WHERE event_id='$event_id'::uuid
+  AND persisted_at IS NULL;
+" >/dev/null
 
   echo "Archived FieldReady class $event_id -> $final_path"
 done
