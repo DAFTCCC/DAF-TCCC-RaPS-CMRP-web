@@ -165,7 +165,7 @@ function omit(o,keys){const x={};Object.entries(o||{}).forEach(([k,v])=>{if(!key
 function flatten(db){
  const events=[],participants=[],evaluations=[],voids=[];
  (db?.events||[]).forEach(e=>{
-  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy'])});
+  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent']),_syncOwnerId:e._syncOwnerId||null,_serverCreatedBy:e._serverCreatedBy||null,_syncDirtyEvent:!!e._syncDirtyEvent});
   (e.participants||[]).forEach(p=>{
    participants.push({id:p.id,event_id:e.id,participant_code:String(p.participantId||'').trim().toUpperCase(),payload:omit(p,['evaluation','voids'])});
    if(p.evaluation){const v=p.evaluation;evaluations.push({id:v.id,participant_id:p.id,event_id:e.id,finalized_at:v.finalizedAt?new Date(v.finalizedAt).toISOString():null,final_result:v.finalResult||null,app_version:v.appVersion||null,evaluator_id:v.evaluatorId||null,payload:v});}
@@ -198,20 +198,31 @@ function evaluatorPushScope(db,x,serverEvents,userId){
   voids:x.voids.filter(inAccessibleEvent)
  };
 }
-function managerPushScope(x,profile,membership){
+function managerPushScope(x,profile,membership,serverEvents,userId){
  const role=profile?.role;
  const expectedType=role==='program_manager'?'installation':role==='majcom_manager'?'majcom':null;
- const scopeValue=(expectedType&&membership?.scope_type===expectedType)?String(membership.scope_value||''):''; 
+ const scopeValue=(expectedType&&membership?.scope_type===expectedType)?String(membership.scope_value||''):'';
  if(!scopeValue)return {events:[],participants:[],evaluations:[],voids:[]};
 
+ const serverIds=new Set((serverEvents||[]).map(e=>e.id));
  const allowedIds=new Set(
   x.events
    .filter(r=>expectedType==='installation'?r.home_installation_id===scopeValue:r.majcom===scopeValue)
    .map(r=>r.id)
  );
+ const writableEventIds=new Set(
+  x.events
+   .filter(r=>allowedIds.has(r.id))
+   .filter(r=>{
+    const isNew=!serverIds.has(r.id);
+    const locallyOwned=!!userId&&r._syncOwnerId===userId;
+    return isNew||locallyOwned||r._syncDirtyEvent;
+   })
+   .map(r=>r.id)
+ );
  const inAllowedEvent=r=>allowedIds.has(r.event_id||r.id);
  return {
-  events:x.events.filter(r=>allowedIds.has(r.id)),
+  events:x.events.filter(r=>writableEventIds.has(r.id)),
   participants:x.participants.filter(inAllowedEvent),
   evaluations:x.evaluations.filter(inAllowedEvent),
   voids:x.voids.filter(inAllowedEvent)
@@ -225,17 +236,17 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  // Filter before every push so the client never attempts to write outside the
  // scope currently granted by FieldReady account governance.
  if(profile?.role==='evaluator')x=evaluatorPushScope(db,x,serverEvents,userId);
- else if(profile?.role==='program_manager'||profile?.role==='majcom_manager')x=managerPushScope(x,profile,membership);
+ else if(profile?.role==='program_manager'||profile?.role==='majcom_manager')x=managerPushScope(x,profile,membership,serverEvents,userId);
 
  const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));
  const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));
- await upsert(CFG.tables.events,x.events);
+ await upsert(CFG.tables.events,x.events.map(r=>omit(r,['_syncOwnerId','_serverCreatedBy','_syncDirtyEvent'])));
  await upsert(CFG.tables.participants,x.participants);
  await upsert(CFG.tables.evaluations,writableEvaluations);
  await upsert(CFG.tables.voids,x.voids);
 }
 function rebuild(x,fallback){
- const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,_serverCreatedBy:r.created_by||null,participants:[]}));
+ const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,_serverCreatedBy:r.created_by||null,_syncDirtyEvent:false,participants:[]}));
  const pMap=new Map();x.participants.forEach(r=>{const e=eMap.get(r.event_id);if(!e)return;const p={...(r.payload||{}),id:r.id,participantId:(r.payload||{}).participantId||r.participant_code,voids:[],evaluation:null};e.participants.push(p);pMap.set(r.id,p);});
  x.evaluations.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.evaluation={...(r.payload||{}),id:r.id};});
  x.voids.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.voids.push({...(r.payload||{}),id:r.id});});

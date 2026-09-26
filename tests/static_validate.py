@@ -165,6 +165,10 @@ if "profile?.role==='program_manager'||profile?.role==='majcom_manager'" not in 
     errors.append('Scoped manager sync isolation guard missing')
 if 'currentMembership' not in sync:
     errors.append('Scoped manager sync must load the active account membership')
+if '_syncDirtyEvent' not in app or '_syncDirtyEvent' not in sync:
+    errors.append('Manager event edits must be tracked so unchanged server events are not rewritten')
+if "managerPushScope(x,profile,membership,serverEvents,userId)" not in sync:
+    errors.append('Manager sync must distinguish existing server events from new local events')
 if "_syncOwnerId" not in app or "_serverCreatedBy" not in sync:
     errors.append('Sync ownership markers required to prevent cross-account event pushes')
 if "omit(e,['participants','_syncOwnerId','_serverCreatedBy'])" not in sync:
@@ -212,6 +216,8 @@ if 'accountEventScope' not in app or 'currentAccessMembership' not in app:
     errors.append('Event form must load and enforce current manager membership scope')
 if "scope.role==='program_manager'" not in app or "scope.role==='majcom_manager'" not in app:
     errors.append('Event form missing Program/MAJCOM Manager scope restrictions')
+if "scopedInstallation?.commands" not in app:
+    errors.append('Program Manager event form must allow only commands valid for the scoped installation')
 
 # JS syntax checks.
 for f in ['version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
