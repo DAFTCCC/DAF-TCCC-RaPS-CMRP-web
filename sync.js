@@ -174,6 +174,14 @@ function flatten(db){
  });
  return {events,participants,evaluations,voids};
 }
+async function insertRows(table,rows){if(!rows.length)return;await api('/rest/v1/'+table,{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(rows)});}
+async function patchRowsById(table,rows){
+ for(const row of rows){
+  const id=row.id;
+  const body=omit(row,['id']);
+  await api('/rest/v1/'+table+'?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(body)});
+ }
+}
 async function upsert(table,rows){if(!rows.length)return;await api('/rest/v1/'+table+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});}
 async function getAll(table){return (await api('/rest/v1/'+table+'?select=*',{method:'GET'}))||[];}
 function evaluatorPushScope(db,x,serverEvents,userId){
@@ -240,7 +248,20 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
 
  const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));
  const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));
- await upsert(CFG.tables.events,x.events.map(r=>omit(r,['_syncOwnerId','_serverCreatedBy','_syncDirtyEvent'])));
+ const serverEventIds=new Set((serverEvents||[]).map(r=>r.id));
+ const eventWireRows=x.events.map(r=>({
+  raw:r,
+  wire:omit(r,['_syncOwnerId','_serverCreatedBy','_syncDirtyEvent'])
+ }));
+ const newEvents=eventWireRows.filter(x=>!serverEventIds.has(x.raw.id)).map(x=>x.wire);
+ const changedEvents=eventWireRows.filter(x=>serverEventIds.has(x.raw.id)&&x.raw._syncDirtyEvent).map(x=>x.wire);
+
+ // fr_events intentionally avoids INSERT .. ON CONFLICT DO UPDATE.
+ // PostgreSQL RLS evaluates that conflict-write path differently from a plain
+ // INSERT and rejects otherwise-valid scoped-manager creations. New events use
+ // a normal INSERT; existing explicitly edited events use PATCH by primary key.
+ await insertRows(CFG.tables.events,newEvents);
+ await patchRowsById(CFG.tables.events,changedEvents);
  await upsert(CFG.tables.participants,x.participants);
  await upsert(CFG.tables.evaluations,writableEvaluations);
  await upsert(CFG.tables.voids,x.voids);

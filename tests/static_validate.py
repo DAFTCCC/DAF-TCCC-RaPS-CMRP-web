@@ -169,6 +169,12 @@ if '_syncDirtyEvent' not in app or '_syncDirtyEvent' not in sync:
     errors.append('Manager event edits must be tracked so unchanged server events are not rewritten')
 if "managerPushScope(x,profile,membership,serverEvents,userId)" not in sync:
     errors.append('Manager sync must distinguish existing server events from new local events')
+if 'insertRows(CFG.tables.events,newEvents)' not in sync:
+    errors.append('Event sync must use plain INSERT for new events')
+if 'patchRowsById(CFG.tables.events,changedEvents)' not in sync:
+    errors.append('Event sync must PATCH existing edited events by id')
+if "upsert(CFG.tables.events" in sync:
+    errors.append('fr_events must never use generic upsert under hardened RLS')
 if "_syncOwnerId" not in app or "_serverCreatedBy" not in sync:
     errors.append('Sync ownership markers required to prevent cross-account event pushes')
 if "omit(e,['participants','_syncOwnerId','_serverCreatedBy'])" not in sync:
