@@ -1,0 +1,10 @@
+[Unit]
+Description=FieldReady closed-class CSV archive worker
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/fieldready-archive-worker
+User=root
+Group=root
