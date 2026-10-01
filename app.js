@@ -279,7 +279,7 @@ function finalizable(ev=getEval(),s=skill()){
 }
 
 function renderHome(){
- showView('homeView');populateFilters();renderManagement();renderParticipantIndex();renderEvents();
+ showView('homeView');populateFilters();renderManagement();renderParticipantIndex();renderEvents();SYNC?.resumeAutoSync?.();
 }
 function scopedEvents(){return db.events.filter(e=>(!filters.majcom||e.majcom===filters.majcom)&&(!filters.base||e.homeInstallationId===filters.base)&&(!filters.skill||e.skillId===filters.skill)&&(!filters.arm||e.studyArm===filters.arm)&&(!filters.timepoint||e.timepoint===filters.timepoint));}
 function finalizedRows(events=scopedEvents()){
@@ -426,7 +426,7 @@ async function showEventForm(existing=null){
  };
 }
 function openEvent(id){currentEventId=id;currentParticipantId=null;renderEvent();}
-function renderEvent(){const e=event();if(!e)return renderHome();showView('eventView');const s=skill(e),closed=eventClosed(e);$('eventKicker').textContent=`${e.timepoint.toUpperCase()} · ${e.studyArm.toUpperCase()}${closed?' · CLOSED':''}`;$('eventTitle').textContent=e.name;$('eventSub').textContent=`${s.name} · ${s.source}${closed?' · Read-only archive':''}`;const home=installation(e.homeInstallationId);const vals=[['Class status',closed?'CLOSED':'OPEN'],['Study arm',e.studyArm],['Timepoint',e.timepoint],['MAJCOM',commandName(e.majcom)],['Home installation',eventHomeName(e)],['Host command',home?commandName(home.hostCommand):'—'],['Unit',e.unit||'—'],['Training location',e.trainingLocation||'—'],['Scenario',e.scenario||'—'],['Scenario version',e.scenarioVersion||'1'],['Date',e.date||'—'],['Evaluator',e.leadEvaluator||'—'],['Closed at',closed?new Date(e.closedAt).toLocaleString():'—'],['App version',BUILD.versionName]];$('eventMeta').innerHTML=vals.map(([a,b])=>`<div class="metaCell"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');const edit=$('editEventBtn'),add=$('addParticipantBtn'),close=$('closeEventBtn'),del=$('deleteEventBtn');if(edit)edit.classList.toggle('hidden',closed||!canManageEventLifecycle());if(add)add.classList.toggle('hidden',closed);if(close){close.classList.toggle('hidden',closed||!canManageEventLifecycle());close.disabled=false;}if(del)del.classList.toggle('hidden',!canDeleteEvent());renderRoster();renderEventAnalytics();}
+function renderEvent(){const e=event();if(!e)return renderHome();showView('eventView');SYNC?.resumeAutoSync?.();const s=skill(e),closed=eventClosed(e);$('eventKicker').textContent=`${e.timepoint.toUpperCase()} · ${e.studyArm.toUpperCase()}${closed?' · CLOSED':''}`;$('eventTitle').textContent=e.name;$('eventSub').textContent=`${s.name} · ${s.source}${closed?' · Read-only archive':''}`;const home=installation(e.homeInstallationId);const vals=[['Class status',closed?'CLOSED':'OPEN'],['Study arm',e.studyArm],['Timepoint',e.timepoint],['MAJCOM',commandName(e.majcom)],['Home installation',eventHomeName(e)],['Host command',home?commandName(home.hostCommand):'—'],['Unit',e.unit||'—'],['Training location',e.trainingLocation||'—'],['Scenario',e.scenario||'—'],['Scenario version',e.scenarioVersion||'1'],['Date',e.date||'—'],['Evaluator',e.leadEvaluator||'—'],['Closed at',closed?new Date(e.closedAt).toLocaleString():'—'],['App version',BUILD.versionName]];$('eventMeta').innerHTML=vals.map(([a,b])=>`<div class="metaCell"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');const edit=$('editEventBtn'),add=$('addParticipantBtn'),close=$('closeEventBtn'),del=$('deleteEventBtn');if(edit)edit.classList.toggle('hidden',closed||!canManageEventLifecycle());if(add)add.classList.toggle('hidden',closed);if(close){close.classList.toggle('hidden',closed||!canManageEventLifecycle());close.disabled=false;}if(del)del.classList.toggle('hidden',!canDeleteEvent());renderRoster();renderEventAnalytics();}
 function renderHomeSilently(){populateFilters();renderManagement();renderParticipantIndex();renderEvents();}
 function renderRoster(){const e=event(),closed=eventClosed(e);$('rosterTable').innerHTML=e.participants.length?`<table class="dataTable"><thead><tr><th>Participant ID</th><th>AFSC</th><th>Clinical years</th><th>Work section</th><th>Exposure</th><th>Status</th><th></th></tr></thead><tbody>${e.participants.map(p=>{const ev=p.evaluation,score=ev?scoring(ev,skill(e)):null,status=ev?.finalizedAt?ev.finalResult:ev?'IN PROGRESS':'NOT STARTED';return `<tr><td><b>${esc(p.participantId)}</b><div class="tiny">${esc(p.rank||'')}</div></td><td>${esc(p.afsc||'—')}</td><td>${esc(p.clinicalYears??'—')}</td><td>${esc(p.workSection||'—')}</td><td class="tiny">${p.intervention?.sessions||0} sessions · ${p.intervention?.repetitions||0} reps · ${p.intervention?.coachingEvents||0} coaching</td><td><span class="status ${status==='PASS'?'pass':status==='FAIL'?'fail':''}">${status}</span>${ev?`<div class="tiny">${score.percent==null?'—':pct(score.percent)}</div>`:''}</td><td><button class="btn ghost" data-grade="${p.id}">${closed||ev?.finalizedAt?'Review':'Grade'}</button> <button class="btn ghost" data-longitudinal="${esc(p.participantId)}">Longitudinal</button> ${closed?'':`<button class="btn ghost" data-editp="${p.id}">Edit</button>`}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty">No participants rostered.</div>';document.querySelectorAll('[data-grade]').forEach(b=>b.onclick=()=>openEvaluation(b.dataset.grade));document.querySelectorAll('[data-longitudinal]').forEach(b=>b.onclick=()=>openLongitudinalRecord(b.dataset.longitudinal,e.skillId));document.querySelectorAll('[data-editp]').forEach(b=>b.onclick=()=>showParticipantForm(e.participants.find(p=>p.id===b.dataset.editp)));}
 function showParticipantForm(existing=null){const e=event();if(eventClosed(e)){toast('Closed classes are read-only.');return;}openModal(existing?'Edit Participant':'Add Participant',`<form id="participantForm"><div class="formGrid">
@@ -645,7 +645,9 @@ window.addEventListener('fieldready:remote-db',e=>{
  // Synchronization must never eject an evaluator from the workflow they are
  // actively using. Refresh the current screen in place after reconciliation.
  if(activeView==='evalView'&&event()&&participant()&&getEval()){
+  const y=window.scrollY;
   renderEvaluation();
+  requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'instant'}));
  }else if(activeView==='eventView'&&event()){
   renderEvent();
  }else if(activeView==='participantView'&&currentRecordKey){
@@ -658,7 +660,14 @@ window.addEventListener('fieldready:remote-db',e=>{
 
  toast('FieldReady server data refreshed.');
 });
-SYNC?.init?.({getDb:()=>db});
+SYNC?.init?.({
+ getDb:()=>db,
+ shouldDeferAutoSync:()=>{
+  const activeView=document.querySelector('.view.active')?.id;
+  const ev=getEval();
+  return activeView==='evalView'&&!!ev&&!ev.finalizedAt;
+ }
+});
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 renderHome();
 })();

@@ -7,6 +7,7 @@ let busy=false;
 let timer=null;
 let changeGeneration=0;
 let rerunAfterBusy=false;
+let shouldDeferAutoSync=()=>false;
 
 function configured(){return !!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
 function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY))||{pending:0,lastSyncAt:null,lastError:null};}catch{return {pending:0,lastSyncAt:null,lastError:null};}}
@@ -21,6 +22,7 @@ function status(){
  if(!session()?.access_token)return {code:'signin',label:'SIGN IN',detail:'Backend configured; sign in to synchronize.'};
  if(busy)return {code:'syncing',label:'SYNCING…',detail:'Synchronizing with the FieldReady NUC.'};
  if(m.lastError)return {code:'error',label:'SYNC ERROR',detail:m.lastError};
+ if(m.pending&&shouldDeferAutoSync())return {code:'pending',label:'GRADING · LOCAL',detail:'Changes are saved locally. Server sync will resume after grading is finalized.'};
  if(m.pending)return {code:'pending',label:'PENDING · '+m.pending,detail:'Local changes are waiting to sync.'};
  if(m.lastSyncAt)return {code:'synced',label:'SYNCED · '+new Date(m.lastSyncAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),detail:'Local and server records reconciled.'};
  return {code:'ready',label:'READY TO SYNC',detail:'Authenticated; no successful sync recorded yet.'};
@@ -288,7 +290,8 @@ function rebuild(x,fallback){
  return {schemaVersion:fallback?.schemaVersion||5,appVersion:fallback?.appVersion||window.FIELDREADY_BUILD?.versionName||'dev',events:[...eMap.values()]};
 }
 async function pull(fallback){const a=await Promise.all([getAll(CFG.tables.events),getAll(CFG.tables.participants),getAll(CFG.tables.evaluations),getAll(CFG.tables.voids)]);return rebuild({events:a[0],participants:a[1],evaluations:a[2],voids:a[3]},fallback);}
-async function syncNow(dbArg){
+async function syncNow(dbArg,opts={}){
+ if(!opts.force&&shouldDeferAutoSync()){renderStatus();return;}
  if(busy){rerunAfterBusy=true;return;}
  if(!configured()||!navigator.onLine)return;
  await ensureSession();if(!session()?.access_token){renderStatus();return;}
@@ -328,7 +331,7 @@ async function syncNow(dbArg){
   if(rerunAfterBusy){
    rerunAfterBusy=false;
    clearTimeout(timer);
-   timer=setTimeout(()=>syncNow().catch(()=>{}),100);
+   if(!shouldDeferAutoSync())timer=setTimeout(()=>syncNow().catch(()=>{}),100);
   }
  }
 }
@@ -339,15 +342,29 @@ function noteLocalChange(){
  m.lastError=null;
  writeMeta(m);
  if(!configured()||!navigator.onLine||!session()?.access_token)return;
+ if(shouldDeferAutoSync()){clearTimeout(timer);renderStatus();return;}
  if(busy){rerunAfterBusy=true;return;}
  clearTimeout(timer);
  timer=setTimeout(()=>syncNow().catch(()=>{}),CFG.autoSyncDelayMs||1500);
 }
-function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token)syncNow().catch(()=>{});});window.addEventListener('offline',renderStatus);}
+function resumeAutoSync(){
+ if(shouldDeferAutoSync())return;
+ const m=readMeta();
+ if(!m.pending||!configured()||!navigator.onLine||!session()?.access_token||busy)return;
+ clearTimeout(timer);
+ timer=setTimeout(()=>syncNow().catch(()=>{}),100);
+}
+function init(opts={}){
+ getDb=opts.getDb||getDb;
+ shouldDeferAutoSync=typeof opts.shouldDeferAutoSync==='function'?opts.shouldDeferAutoSync:(()=>false);
+ renderStatus();
+ window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token&&!shouldDeferAutoSync())syncNow().catch(()=>{});});
+ window.addEventListener('offline',renderStatus);
+}
 window.FieldReadySync=Object.freeze({
  init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
  approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
- syncNow,noteLocalChange
+ syncNow,noteLocalChange,resumeAutoSync
 });
 })();
