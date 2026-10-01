@@ -8,6 +8,7 @@ let timer=null;
 let changeGeneration=0;
 let rerunAfterBusy=false;
 let shouldDeferAutoSync=()=>false;
+let activeDataEpoch=null;
 
 function configured(){return !!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
 function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY))||{pending:0,lastSyncAt:null,lastError:null};}catch{return {pending:0,lastSyncAt:null,lastError:null};}}
@@ -33,6 +34,7 @@ async function api(path,options={}){
  const s=session();
  const headers={'apikey':CFG.anonKey,'Content-Type':'application/json'};
  if(s?.access_token)headers.Authorization='Bearer '+s.access_token;
+ if(activeDataEpoch&&path.startsWith('/rest/v1/'))headers['x-fieldready-epoch']=activeDataEpoch;
  Object.assign(headers,options.headers||{});
  const res=await fetch(CFG.url.replace(/\/$/,'')+path,{...options,headers});
  const txt=await res.text();let body=null;try{body=txt?JSON.parse(txt):null;}catch{body=txt;}
@@ -53,7 +55,7 @@ async function signIn(email,password){
   throw e;
  }
 }
-async function signOut(){try{if(session()?.access_token)await api('/auth/v1/logout',{method:'POST'});}catch{}setSession(null);}
+async function signOut(){try{if(session()?.access_token)await api('/auth/v1/logout',{method:'POST'});}catch{}activeDataEpoch=null;setSession(null);}
 
 async function acceptAuthCallback(){
  const raw=location.hash.startsWith('#')?location.hash.slice(1):'';
@@ -309,6 +311,7 @@ async function syncNow(dbArg,opts={}){
   // Server generation is authoritative. A client that predates a reset must
   // pull the current server state before it is ever allowed to push.
   const serverEpoch=await dataEpoch();
+  activeDataEpoch=serverEpoch;
   const metaBefore=readMeta();
   if(metaBefore.dataEpoch!==serverEpoch){
    const remote=await pull(source);
