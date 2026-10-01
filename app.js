@@ -49,7 +49,10 @@ function setAccountUi(profile,membership=null){
  currentAccessMembership=membership||null;
  const role=profile?.role||'';
  const admin=$('adminBtn');
- if(admin)admin.classList.toggle('hidden',role!=='enterprise');
+ if(admin){
+  admin.classList.toggle('hidden',!['program_manager','majcom_manager','enterprise'].includes(role));
+  admin.textContent=role==='enterprise'?'Users':'Team';
+ }
  const canManageEvents=['program_manager','majcom_manager','enterprise'].includes(role);
  const newEvent=$('newEventBtn');
  const editEvent=$('editEventBtn');
@@ -145,9 +148,59 @@ function openAccountRequest(){
  };
 }
 
-async function renderAdmin(){
- if(currentAccessProfile?.role!=='enterprise')return renderHome();
+async function renderManagerTeam(){
+ const role=currentAccessProfile?.role||'';
+ if(!['program_manager','majcom_manager'].includes(role))return renderHome();
  showView('adminView');
+ $('inviteUserBtn').classList.add('hidden');
+ $('adminEyebrow').textContent=role==='majcom_manager'?'MAJCOM MANAGEMENT':'PROGRAM MANAGEMENT';
+ $('adminTitle').textContent=role==='majcom_manager'?'MAJCOM Team':'Program Team';
+ $('adminSub').textContent=role==='majcom_manager'
+  ?'Manage Program Managers and evaluators within your MAJCOM. You also retain all Program Manager class and evaluator capabilities.'
+  :'Appoint evaluators for your program and assign them to your classes.';
+ $('adminSectionOneEyebrow').textContent=role==='majcom_manager'?'PROGRAM MANAGERS':'EVALUATOR POOL';
+ $('adminSectionOneTitle').textContent=role==='majcom_manager'?'Appointed Program Managers':'Appointed evaluators';
+ $('adminSectionTwoEyebrow').textContent='TEAM MANAGEMENT';
+ $('adminSectionTwoTitle').textContent=role==='majcom_manager'?'Appoint team members':'Appoint an evaluator';
+ $('accountRequestsTable').innerHTML='<div class="empty">Loading team…</div>';
+ $('accountUsersTable').innerHTML='';
+ try{
+  const team=await SYNC.managerTeam();
+  const evaluators=team.evaluators||[];
+  const candidates=team.candidates||[];
+  const pms=team.program_managers||[];
+  if(role==='program_manager'){
+   $('accountRequestsTable').innerHTML=evaluators.length?`<table class="dataTable"><thead><tr><th>Evaluator</th><th>Email</th><th></th></tr></thead><tbody>${evaluators.map(p=>`<tr><td><b>${esc(p.display_name||'—')}</b></td><td>${esc(p.email||'—')}</td><td><button class="btn danger ghost compactBtn" data-remove-evaluator="${p.user_id}">Remove</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No evaluators appointed yet.</div>';
+   const available=candidates.filter(p=>!evaluators.some(e=>e.user_id===p.user_id));
+   $('accountUsersTable').innerHTML=available.length?`<form id="appointEvaluatorForm"><div class="formGrid"><label class="full"><span>Evaluator</span><select name="userId" required><option value="">Select evaluator</option>${available.map(p=>`<option value="${p.user_id}">${esc(p.display_name||p.email||p.user_id)} · ${esc(p.email||'')}</option>`).join('')}</select></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Appoint Evaluator</button></div></form>`:'<div class="empty">No additional active evaluators are available.</div>';
+  }else{
+   $('accountRequestsTable').innerHTML=pms.length?`<table class="dataTable"><thead><tr><th>Program Manager</th><th>Installation</th><th>Email</th></tr></thead><tbody>${pms.map(p=>`<tr><td><b>${esc(p.display_name||'—')}</b></td><td>${esc(installation(p.installation_id)?.name||p.installation_id||'—')}</td><td>${esc(p.email||'—')}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">No Program Managers appointed in this MAJCOM yet.</div>';
+   const evaluatorCandidates=candidates.filter(p=>p.role==='evaluator');
+   const pmCandidates=candidates.filter(p=>p.role!=='enterprise'&&p.role!=='majcom_manager');
+   const majcom=team.scope_value||currentAccessMembership?.scope_value||'';
+   const bases=LOC.installations.filter(i=>i.active!==false&&(i.commands||[]).includes(majcom)).sort((a,b)=>a.name.localeCompare(b.name));
+   $('accountUsersTable').innerHTML=`<div class="twoCol"><div><h3>Appoint Program Manager</h3><form id="appointPmForm"><div class="formGrid"><label class="full"><span>User</span><select name="userId" required><option value="">Select user</option>${pmCandidates.map(p=>`<option value="${p.user_id}">${esc(p.display_name||p.email||p.user_id)} · ${esc(p.email||'')}</option>`).join('')}</select></label><label class="full"><span>Installation</span><select name="installationId" required><option value="">Select installation</option>${bases.map(i=>`<option value="${i.id}">${esc(installationLabel(i))}</option>`).join('')}</select></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Appoint Program Manager</button></div></form></div><div><h3>Appoint Evaluator</h3><form id="appointEvaluatorForm"><div class="formGrid"><label class="full"><span>Evaluator</span><select name="userId" required><option value="">Select evaluator</option>${evaluatorCandidates.map(p=>`<option value="${p.user_id}">${esc(p.display_name||p.email||p.user_id)} · ${esc(p.email||'')}</option>`).join('')}</select></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Appoint Evaluator</button></div></form></div></div>`;
+  }
+  document.querySelectorAll('[data-remove-evaluator]').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this evaluator from your appointed pool and your managed class assignments?'))return;try{await SYNC.removeAppointedEvaluator(b.dataset.removeEvaluator);toast('Evaluator removed.');renderManagerTeam();}catch(ex){alert(ex?.message||'Unable to remove evaluator.');}});
+  const ef=$('appointEvaluatorForm');if(ef)ef.onsubmit=async e=>{e.preventDefault();const fd=new FormData(ef);try{await SYNC.appointEvaluator(fd.get('userId'));toast('Evaluator appointed.');renderManagerTeam();}catch(ex){alert(ex?.message||'Unable to appoint evaluator.');}};
+  const pf=$('appointPmForm');if(pf)pf.onsubmit=async e=>{e.preventDefault();const fd=new FormData(pf);try{await SYNC.assignProgramManager(fd.get('userId'),fd.get('installationId'),team.scope_value||currentAccessMembership?.scope_value||'');toast('Program Manager appointed.');renderManagerTeam();}catch(ex){alert(ex?.message||'Unable to appoint Program Manager.');}};
+ }catch(ex){
+  $('accountRequestsTable').innerHTML=`<div class="empty bad">${esc(ex?.message||'Unable to load manager team.')}</div>`;
+  $('accountUsersTable').innerHTML='';
+ }
+}
+
+async function renderAdmin(){
+ if(currentAccessProfile?.role!=='enterprise')return renderManagerTeam();
+ showView('adminView');
+ $('inviteUserBtn').classList.remove('hidden');
+ $('adminEyebrow').textContent='ENTERPRISE ADMINISTRATION';
+ $('adminTitle').textContent='FieldReady Accounts';
+ $('adminSub').textContent='Approve evaluator access requests, invite users, assign roles and scope, or deactivate access without deleting historical study records.';
+ $('adminSectionOneEyebrow').textContent='PENDING ACCESS';
+ $('adminSectionOneTitle').textContent='Account requests';
+ $('adminSectionTwoEyebrow').textContent='AUTHORIZED USERS';
+ $('adminSectionTwoTitle').textContent='FieldReady users';
  $('accountRequestsTable').innerHTML='<div class="empty">Loading account requests…</div>';
  $('accountUsersTable').innerHTML='<div class="empty">Loading users…</div>';
  try{
