@@ -137,6 +137,7 @@ async function listAccountAdministration(){
 async function rpc(name,args){
  return api('/rest/v1/rpc/'+name,{method:'POST',body:JSON.stringify(args||{})});
 }
+async function dataEpoch(){return String(await rpc('fr_get_data_epoch',{}));}
 
 async function approveAccountRequest(requestId,role,scopeType=null,scopeValue=null){
  return rpc('fr_approve_account_request',{p_request_id:requestId,p_role:role,p_scope_type:scopeType,p_scope_value:scopeValue});
@@ -295,13 +296,8 @@ async function syncNow(dbArg,opts={}){
  if(busy){rerunAfterBusy=true;return;}
  if(!configured()||!navigator.onLine)return;
 
- // Snapshot local state before any network work begins. If grading starts
- // while this sync is in flight, later edits cannot leak into this sync.
  const source=dbArg||getDb?.();
  if(!source)throw new Error('No local FieldReady database is available.');
- const db=typeof structuredClone==='function'
-  ?structuredClone(source)
-  :JSON.parse(JSON.stringify(source));
 
  await ensureSession();
  if(!session()?.access_token){renderStatus();return;}
@@ -310,6 +306,28 @@ async function syncNow(dbArg,opts={}){
  busy=true;renderStatus();
  const startedGeneration=changeGeneration;
  try{
+  // Server generation is authoritative. A client that predates a reset must
+  // pull the current server state before it is ever allowed to push.
+  const serverEpoch=await dataEpoch();
+  const metaBefore=readMeta();
+  if(metaBefore.dataEpoch!==serverEpoch){
+   const remote=await pull(source);
+   const m=readMeta();
+   m.pending=0;
+   m.lastError=null;
+   m.lastSyncAt=Date.now();
+   m.dataEpoch=serverEpoch;
+   writeMeta(m);
+   window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote,epochReset:true}}));
+   return;
+  }
+
+  // Snapshot only after the epoch gate passes. Later local edits cannot leak
+  // into an in-flight sync.
+  const db=typeof structuredClone==='function'
+   ?structuredClone(source)
+   :JSON.parse(JSON.stringify(source));
+
   const profile=await currentProfile();
   const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await currentMembership():null;
   if(!opts.force&&shouldDeferAutoSync())return;
@@ -334,6 +352,7 @@ async function syncNow(dbArg,opts={}){
   m.pending=0;
   m.lastError=null;
   m.lastSyncAt=Date.now();
+  m.dataEpoch=await dataEpoch();
   writeMeta(m);
   window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));
  }
@@ -383,7 +402,7 @@ function init(opts={}){
 }
 window.FieldReadySync=Object.freeze({
  init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
- currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
+ currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,dataEpoch,
  approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
  syncNow,noteLocalChange,pauseAutoSync,resumeAutoSync
 });
