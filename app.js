@@ -323,9 +323,19 @@ function renderLongitudinalRecord(){const rows=recordRows();if(!rows.length)retu
 function exportLongitudinalRecord(){const rows=recordRows(),headers=['participant_id','skill_id','timepoint','date','event','study_arm','majcom','installation','final_result','score_percent','critical_fail_count','assessment_stopwatch_seconds','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor'];const out=[headers];rows.filter(r=>r.ev).forEach(r=>{const sc=scoring(r.ev,r.s);itemsForSkill(r.s).forEach(i=>{const d=r.ev.failureDetails?.[i.id]||{};out.push([r.p.participantId,r.e.skillId,r.e.timepoint,r.e.date,r.e.name,r.e.studyArm,r.e.majcom,eventHomeName(r.e),r.ev.finalResult||'',sc.percent==null?'':(sc.percent*100).toFixed(1),sc.criticalFail,r.ev.stopwatch?.completed?Math.round((r.ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.text,i.critical?'Y':'N',r.ev.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'']);});});download(`FieldReady_${safeName(rows[0]?.p.participantId||'Participant')}_Longitudinal.csv`,out.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
 function renderEvents(){const es=db.events.filter(e=>!e.deletedAt).sort((a,b)=>String(b.date).localeCompare(String(a.date)));$('eventsList').innerHTML=es.length?es.map(e=>{const finals=e.participants.filter(p=>p.evaluation?.finalizedAt).length;const closed=eventClosed(e);return `<div class="eventCard" data-event="${e.id}"><div><h3>${esc(e.name)}${closed?' <span class="status pass">CLOSED</span>':''}</h3><div class="eventMetaLine">${esc(SKILLS[e.skillId]?.shortName||e.skillId)} · ${esc(e.studyArm)} · ${esc(e.timepoint)} · ${esc(commandName(e.majcom))} · ${esc(eventHomeName(e))}</div></div><div><span class="status">${finals}/${e.participants.length} finalized</span></div></div>`;}).join(''):'<div class="empty">No study events yet. Create an event for a skill, timepoint, study arm, MAJCOM, and installation.</div>';document.querySelectorAll('[data-event]').forEach(x=>x.onclick=()=>openEvent(x.dataset.event));}
 
-function showEventForm(existing=null){
+async function showEventForm(existing=null){
  if(currentAccessProfile?.role==='evaluator'){toast('Evaluators can grade assigned events but cannot create or edit study events.');return;}
  const scope=accountEventScope();
+ let team={evaluators:[]},assigned=[];
+ try{
+  team=await SYNC.managerTeam();
+  if(existing)assigned=await SYNC.getEventEvaluators(existing.id);
+ }catch(ex){
+  alert(ex?.message||'Unable to load evaluator assignments.');
+  return;
+ }
+ const evaluatorPool=team.evaluators||[];
+ const assignedIds=new Set((assigned||[]).map(x=>x.user_id));
  const scopedInstallation=scope.role==='program_manager'?installation(scope.installationId):null;
  const allowedCommands=scope.role==='program_manager'
   ?LOC.commands.filter(c=>(scopedInstallation?.commands||[]).includes(c.id))
@@ -333,13 +343,16 @@ function showEventForm(existing=null){
    ?LOC.commands.filter(c=>c.id===scope.majcom)
    :LOC.commands;
  const selectedCommand=existing?.majcom||scope.majcom||(allowedCommands.length===1?allowedCommands[0].id:'');
- const commands=allowedCommands.map(c=>`<option value="${c.id}" ${selectedCommand===c.id?'selected':''}>${esc(c.name)}</option>`).join('');const skills=Object.values(SKILLS).map(s=>`<option value="${s.id}" ${(existing?.skillId||'CMC')===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+ const commands=allowedCommands.map(c=>`<option value="${c.id}" ${selectedCommand===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+ const skills=Object.values(SKILLS).map(s=>`<option value="${s.id}" ${(existing?.skillId||'CMC')===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+ const evaluatorOptions=evaluatorPool.map(p=>`<option value="${p.user_id}" ${assignedIds.has(p.user_id)?'selected':''}>${esc(p.display_name||p.email||p.user_id)} · ${esc(p.email||'')}</option>`).join('');
  openModal(existing?'Edit Study Event':'New Study Event',`<form id="eventForm"><div class="formGrid">
  <label><span>Event / class name *</span><input name="name" required value="${esc(existing?.name||'')}"></label><label><span>Date *</span><input name="date" type="date" required value="${esc(existing?.date||isoDate())}"></label>
  <label><span>Skill / assessment *</span><select name="skillId" ${existing?'disabled':''}>${skills}</select></label><label><span>Event type</span><select name="eventType"><option value="study" ${existing?.eventType!=='calibration'?'selected':''}>Study measurement</option><option value="calibration" ${existing?.eventType==='calibration'?'selected':''}>Evaluator calibration</option></select></label>
  <label><span>Study timepoint *</span><select name="timepoint"><option value="baseline">Baseline</option><option value="3-month">3-Month</option><option value="6-month">6-Month</option></select></label><label><span>Study arm *</span><select name="studyArm"><option>Control</option><option>Frequency-Based</option><option>Deliberate Practice</option></select></label>
  <label class="full"><span>Supported MAJCOM / Command *</span><select name="majcom" required><option value="">Select command</option>${commands}</select></label>
  <label class="full"><span>Home installation *</span><select name="homeInstallationId" required></select></label>
+ <label class="full"><span>Assigned evaluators</span><select name="assignedEvaluators" multiple size="5">${evaluatorOptions}</select><small>${scope.role==='program_manager'?'Only evaluators appointed to your program are available.':scope.role==='majcom_manager'?'Evaluators appointed within your MAJCOM are available.':'All active evaluators are available.'}</small></label>
  <label class="full"><span>Unit / organization</span><input name="unit" value="${esc(existing?.unit||'')}" placeholder="e.g., 15 MDG"></label>
  <label class="full"><span>Training location</span><input name="trainingLocation" value="${esc(existing?.trainingLocation||'')}" placeholder="Defaults to home installation; expeditionary locations may be entered here"></label>
  <label><span>Lead evaluator</span><input name="leadEvaluator" value="${esc(existing?.leadEvaluator||'')}"></label><label><span>Evaluator ID</span><input name="evaluatorId" value="${esc(existing?.evaluatorId||'')}"></label>
@@ -351,7 +364,39 @@ function showEventForm(existing=null){
  if(scope.role==='program_manager'&&selectedCommand)f.elements.majcom.value=selectedCommand;
  if(scope.role==='majcom_manager')f.elements.majcom.value=scope.majcom||'';
  f.elements.majcom.onchange=fillBases;fillBases();
- f.onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f).entries());d.majcom=String(f.elements.majcom.value||'');d.homeInstallationId=String(f.elements.homeInstallationId.value||'');if(d.homeInstallationId==='__OTHER__'){const custom=prompt('Enter home installation / location name:');if(!custom)return;d.homeInstallationName=custom;d.homeInstallationId='';}else d.homeInstallationName=installation(d.homeInstallationId)?.name||'';d.trainingLocation=String(d.trainingLocation||'').trim()||d.homeInstallationName;d.skillId=existing?.skillId||d.skillId;if(existing){Object.assign(existing,d,{_syncDirtyEvent:true});saveDb();closeModal();renderEvent();renderHomeSilently();}else{const ev={id:uuid(),...d,createdAt:now(),_syncOwnerId:SYNC?.session?.()?.user?.id||null,participants:[]};db.events.push(ev);saveDb();closeModal();openEvent(ev.id);}};
+ f.onsubmit=async e=>{
+  e.preventDefault();
+  const submit=f.querySelector('button[type="submit"]');submit.disabled=true;
+  const d=Object.fromEntries(new FormData(f).entries());
+  delete d.assignedEvaluators;
+  const selectedEvaluatorIds=[...f.elements.assignedEvaluators.selectedOptions].map(o=>o.value);
+  d.majcom=String(f.elements.majcom.value||'');
+  d.homeInstallationId=String(f.elements.homeInstallationId.value||'');
+  if(d.homeInstallationId==='__OTHER__'){const custom=prompt('Enter home installation / location name:');if(!custom){submit.disabled=false;return;}d.homeInstallationName=custom;d.homeInstallationId='';}
+  else d.homeInstallationName=installation(d.homeInstallationId)?.name||'';
+  d.trainingLocation=String(d.trainingLocation||'').trim()||d.homeInstallationName;
+  d.skillId=existing?.skillId||d.skillId;
+  try{
+   let target=existing;
+   if(existing){
+    Object.assign(existing,d,{_syncDirtyEvent:true});
+   }else{
+    target={id:uuid(),...d,createdAt:now(),_syncOwnerId:SYNC?.session?.()?.user?.id||null,participants:[]};
+    db.events.push(target);
+   }
+   saveDb();
+   await SYNC.syncNow(db);
+   await SYNC.setEventEvaluators(target.id,selectedEvaluatorIds);
+   await SYNC.syncNow(db);
+   closeModal();
+   openEvent(target.id);
+   renderHomeSilently();
+   toast(existing?'Event and evaluator assignments saved.':'Event created and evaluators assigned.');
+  }catch(ex){
+   alert('Event save failed: '+(ex?.message||ex));
+   submit.disabled=false;
+  }
+ };
 }
 function openEvent(id){currentEventId=id;currentParticipantId=null;renderEvent();}
 function renderEvent(){const e=event();if(!e)return renderHome();showView('eventView');const s=skill(e),closed=eventClosed(e);$('eventKicker').textContent=`${e.timepoint.toUpperCase()} · ${e.studyArm.toUpperCase()}${closed?' · CLOSED':''}`;$('eventTitle').textContent=e.name;$('eventSub').textContent=`${s.name} · ${s.source}${closed?' · Read-only archive':''}`;const home=installation(e.homeInstallationId);const vals=[['Class status',closed?'CLOSED':'OPEN'],['Study arm',e.studyArm],['Timepoint',e.timepoint],['MAJCOM',commandName(e.majcom)],['Home installation',eventHomeName(e)],['Host command',home?commandName(home.hostCommand):'—'],['Unit',e.unit||'—'],['Training location',e.trainingLocation||'—'],['Scenario',e.scenario||'—'],['Scenario version',e.scenarioVersion||'1'],['Date',e.date||'—'],['Evaluator',e.leadEvaluator||'—'],['Closed at',closed?new Date(e.closedAt).toLocaleString():'—'],['App version',BUILD.versionName]];$('eventMeta').innerHTML=vals.map(([a,b])=>`<div class="metaCell"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');const edit=$('editEventBtn'),add=$('addParticipantBtn'),close=$('closeEventBtn'),del=$('deleteEventBtn');if(edit)edit.classList.toggle('hidden',closed||!canManageEventLifecycle());if(add)add.classList.toggle('hidden',closed);if(close){close.classList.toggle('hidden',closed||!canManageEventLifecycle());close.disabled=false;}if(del)del.classList.toggle('hidden',!canDeleteEvent());renderRoster();renderEventAnalytics();}
