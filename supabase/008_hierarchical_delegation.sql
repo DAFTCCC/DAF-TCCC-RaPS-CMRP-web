@@ -1,33 +1,36 @@
--- FieldReady hierarchical delegation and evaluator assignment controls.
--- MAJCOM Manager -> Program Manager -> Appointed Evaluator -> Event assignment.
+-- FieldReady cumulative hierarchical delegation and evaluator assignment controls.
+-- Enterprise -> all capabilities.
+-- MAJCOM Manager -> all Program Manager capabilities within MAJCOM + appoint Program Managers.
+-- Program Manager -> installation management + appoint evaluators + assign appointed evaluators to classes.
+-- Evaluator -> assigned classes only.
 
 alter table public.fr_memberships
   add column if not exists parent_scope_value text;
 
-create table if not exists public.fr_pm_evaluators (
-  program_manager_id uuid not null references public.fr_profiles(user_id) on delete cascade,
+create table if not exists public.fr_manager_evaluators (
+  manager_id uuid not null references public.fr_profiles(user_id) on delete cascade,
   evaluator_id uuid not null references public.fr_profiles(user_id) on delete cascade,
   appointed_by uuid not null default auth.uid(),
   created_at timestamptz not null default now(),
-  primary key(program_manager_id,evaluator_id),
-  check (program_manager_id <> evaluator_id)
+  primary key(manager_id,evaluator_id),
+  check (manager_id <> evaluator_id)
 );
 
-alter table public.fr_pm_evaluators enable row level security;
+alter table public.fr_manager_evaluators enable row level security;
 
-drop policy if exists fr_pm_evaluators_read on public.fr_pm_evaluators;
-create policy fr_pm_evaluators_read
-on public.fr_pm_evaluators
+drop policy if exists fr_manager_evaluators_read on public.fr_manager_evaluators;
+create policy fr_manager_evaluators_read
+on public.fr_manager_evaluators
 for select
 to authenticated
 using (
-  program_manager_id=auth.uid()
+  manager_id=auth.uid()
   or evaluator_id=auth.uid()
   or public.fr_is_enterprise()
 );
 
-grant select on public.fr_pm_evaluators to authenticated;
-revoke insert,update,delete on public.fr_pm_evaluators from anon,authenticated;
+grant select on public.fr_manager_evaluators to authenticated;
+revoke insert,update,delete on public.fr_manager_evaluators from anon,authenticated;
 
 create or replace function public.fr_manager_team()
 returns jsonb
@@ -66,12 +69,13 @@ begin
       'email',p.email,
       'display_name',p.display_name,
       'active',p.active,
-      'role',p.role
+      'role',p.role,
+      'appointed_by_manager',true
     ) order by coalesce(p.display_name,p.email,p.user_id::text)),'[]'::jsonb)
     into v_evaluators
-    from public.fr_pm_evaluators a
+    from public.fr_manager_evaluators a
     join public.fr_profiles p on p.user_id=a.evaluator_id
-    where a.program_manager_id=auth.uid()
+    where a.manager_id=auth.uid()
       and p.active=true
       and p.role='evaluator';
 
@@ -87,6 +91,7 @@ begin
     where p.active=true
       and p.role='evaluator'
       and p.user_id<>auth.uid();
+
   elsif v_role='majcom_manager' then
     select coalesce(jsonb_agg(jsonb_build_object(
       'user_id',p.user_id,
@@ -105,6 +110,39 @@ begin
       and m.scope_type='installation'
       and m.parent_scope_value=v_scope_value;
 
+    select coalesce(jsonb_agg(distinct jsonb_build_object(
+      'user_id',p.user_id,
+      'email',p.email,
+      'display_name',p.display_name,
+      'active',p.active,
+      'role',p.role
+    )),'[]'::jsonb)
+    into v_evaluators
+    from public.fr_profiles p
+    where p.active=true
+      and p.role='evaluator'
+      and (
+        exists(
+          select 1
+          from public.fr_manager_evaluators a
+          where a.manager_id=auth.uid()
+            and a.evaluator_id=p.user_id
+        )
+        or exists(
+          select 1
+          from public.fr_manager_evaluators a
+          join public.fr_memberships pm
+            on pm.user_id=a.manager_id
+           and pm.scope_type='installation'
+          join public.fr_profiles pp
+            on pp.user_id=a.manager_id
+           and pp.active=true
+           and pp.role='program_manager'
+          where a.evaluator_id=p.user_id
+            and pm.parent_scope_value=v_scope_value
+        )
+      );
+
     select coalesce(jsonb_agg(jsonb_build_object(
       'user_id',p.user_id,
       'email',p.email,
@@ -117,6 +155,7 @@ begin
     where p.active=true
       and p.role in ('evaluator','program_manager')
       and p.user_id<>auth.uid();
+
   else
     select coalesce(jsonb_agg(jsonb_build_object(
       'user_id',p.user_id,
@@ -129,6 +168,36 @@ begin
     from public.fr_profiles p
     where p.active=true
       and p.role='evaluator';
+
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'user_id',p.user_id,
+      'email',p.email,
+      'display_name',p.display_name,
+      'active',p.active,
+      'role',p.role
+    ) order by coalesce(p.display_name,p.email,p.user_id::text)),'[]'::jsonb)
+    into v_candidates
+    from public.fr_profiles p
+    where p.active=true
+      and p.role in ('evaluator','program_manager','majcom_manager')
+      and p.user_id<>auth.uid();
+
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'user_id',p.user_id,
+      'email',p.email,
+      'display_name',p.display_name,
+      'active',p.active,
+      'role',p.role,
+      'installation_id',m.scope_value,
+      'majcom',m.parent_scope_value
+    ) order by coalesce(p.display_name,p.email,p.user_id::text)),'[]'::jsonb)
+    into v_program_managers
+    from public.fr_profiles p
+    left join public.fr_memberships m
+      on m.user_id=p.user_id
+     and m.scope_type='installation'
+    where p.active=true
+      and p.role='program_manager';
   end if;
 
   return jsonb_build_object(
@@ -158,8 +227,8 @@ begin
   where p.user_id=auth.uid()
     and p.active=true;
 
-  if v_role<>'program_manager' then
-    raise exception 'Program Manager access required.';
+  if v_role not in ('program_manager','majcom_manager','enterprise') then
+    raise exception 'Manager access required.';
   end if;
 
   if not exists(
@@ -171,16 +240,16 @@ begin
     raise exception 'Active evaluator account not found.';
   end if;
 
-  insert into public.fr_pm_evaluators(program_manager_id,evaluator_id,appointed_by)
+  insert into public.fr_manager_evaluators(manager_id,evaluator_id,appointed_by)
   values(auth.uid(),p_evaluator_id,auth.uid())
-  on conflict (program_manager_id,evaluator_id) do nothing;
+  on conflict (manager_id,evaluator_id) do nothing;
 
   insert into public.fr_audit_log(action,table_name,record_id,new_row)
   values(
     'APPOINT_EVALUATOR',
-    'fr_pm_evaluators',
+    'fr_manager_evaluators',
     p_evaluator_id,
-    jsonb_build_object('program_manager_id',auth.uid(),'evaluator_id',p_evaluator_id)
+    jsonb_build_object('manager_id',auth.uid(),'evaluator_id',p_evaluator_id,'manager_role',v_role)
   );
 end;
 $$;
@@ -195,40 +264,53 @@ set search_path=public
 as $$
 declare
   v_role text;
-  v_installation text;
+  v_scope_type text;
+  v_scope_value text;
 begin
   select p.role into v_role
   from public.fr_profiles p
   where p.user_id=auth.uid()
     and p.active=true;
 
-  if v_role<>'program_manager' then
-    raise exception 'Program Manager access required.';
+  if v_role not in ('program_manager','majcom_manager','enterprise') then
+    raise exception 'Manager access required.';
   end if;
 
-  select m.scope_value into v_installation
+  select m.scope_type,m.scope_value
+    into v_scope_type,v_scope_value
   from public.fr_memberships m
   where m.user_id=auth.uid()
-    and m.scope_type='installation'
   order by m.created_at
   limit 1;
 
-  delete from public.fr_pm_evaluators
-  where program_manager_id=auth.uid()
+  delete from public.fr_manager_evaluators
+  where manager_id=auth.uid()
     and evaluator_id=p_evaluator_id;
 
-  delete from public.fr_event_evaluators x
-  using public.fr_events e
-  where x.event_id=e.id
-    and x.user_id=p_evaluator_id
-    and e.home_installation_id=v_installation;
+  -- Remove class assignments only from classes inside the caller's managed scope.
+  if v_role='program_manager' then
+    delete from public.fr_event_evaluators x
+    using public.fr_events e
+    where x.event_id=e.id
+      and x.user_id=p_evaluator_id
+      and e.home_installation_id=v_scope_value;
+  elsif v_role='majcom_manager' then
+    delete from public.fr_event_evaluators x
+    using public.fr_events e
+    where x.event_id=e.id
+      and x.user_id=p_evaluator_id
+      and e.majcom=v_scope_value;
+  elsif v_role='enterprise' then
+    delete from public.fr_event_evaluators
+    where user_id=p_evaluator_id;
+  end if;
 
   insert into public.fr_audit_log(action,table_name,record_id,old_row)
   values(
     'REMOVE_APPOINTED_EVALUATOR',
-    'fr_pm_evaluators',
+    'fr_manager_evaluators',
     p_evaluator_id,
-    jsonb_build_object('program_manager_id',auth.uid(),'evaluator_id',p_evaluator_id)
+    jsonb_build_object('manager_id',auth.uid(),'evaluator_id',p_evaluator_id,'manager_role',v_role)
   );
 end;
 $$;
@@ -288,21 +370,8 @@ begin
     raise exception 'Active FieldReady user not found.';
   end if;
 
-  if v_target_role='enterprise' then
-    raise exception 'Enterprise accounts cannot be reassigned.';
-  end if;
-
-  if v_role='majcom_manager'
-     and v_target_role='program_manager'
-     and exists(
-       select 1
-       from public.fr_memberships m
-       where m.user_id=p_user_id
-         and m.scope_type='installation'
-         and m.parent_scope_value is not null
-         and m.parent_scope_value<>trim(p_majcom)
-     ) then
-    raise exception 'That Program Manager belongs to another MAJCOM.';
+  if v_target_role in ('enterprise','majcom_manager') then
+    raise exception 'Enterprise and MAJCOM Manager accounts cannot be reassigned as Program Managers.';
   end if;
 
   update public.fr_profiles
@@ -317,7 +386,7 @@ begin
   insert into public.fr_memberships(user_id,scope_type,scope_value,parent_scope_value)
   values(p_user_id,'installation',trim(p_installation),trim(p_majcom));
 
-  delete from public.fr_pm_evaluators
+  delete from public.fr_manager_evaluators
   where evaluator_id=p_user_id;
 
   delete from public.fr_event_evaluators
@@ -379,6 +448,7 @@ as $$
 declare
   v_event public.fr_events%rowtype;
   v_role text;
+  v_scope_value text;
   v_ids uuid[] := coalesce(p_user_ids,'{}'::uuid[]);
   v_old jsonb;
   v_new jsonb;
@@ -401,8 +471,8 @@ begin
   where p.user_id=auth.uid()
     and p.active=true;
 
-  if v_role not in ('program_manager','enterprise') then
-    raise exception 'Program Manager or Enterprise access required.';
+  if v_role not in ('program_manager','majcom_manager','enterprise') then
+    raise exception 'Manager access required.';
   end if;
 
   if not public.fr_can_manage_event_scope(
@@ -429,12 +499,49 @@ begin
     from unnest(v_ids) u(user_id)
     where not exists(
       select 1
-      from public.fr_pm_evaluators a
-      where a.program_manager_id=auth.uid()
+      from public.fr_manager_evaluators a
+      where a.manager_id=auth.uid()
         and a.evaluator_id=u.user_id
     )
   ) then
     raise exception 'Program Managers may assign only their appointed evaluators.';
+  end if;
+
+  if v_role='majcom_manager' then
+    select m.scope_value into v_scope_value
+    from public.fr_memberships m
+    where m.user_id=auth.uid()
+      and m.scope_type='majcom'
+    order by m.created_at
+    limit 1;
+
+    if exists(
+      select 1
+      from unnest(v_ids) u(user_id)
+      where not (
+        exists(
+          select 1
+          from public.fr_manager_evaluators a
+          where a.manager_id=auth.uid()
+            and a.evaluator_id=u.user_id
+        )
+        or exists(
+          select 1
+          from public.fr_manager_evaluators a
+          join public.fr_memberships pm
+            on pm.user_id=a.manager_id
+           and pm.scope_type='installation'
+          join public.fr_profiles pp
+            on pp.user_id=a.manager_id
+           and pp.active=true
+           and pp.role='program_manager'
+          where a.evaluator_id=u.user_id
+            and pm.parent_scope_value=v_scope_value
+        )
+      )
+    ) then
+      raise exception 'MAJCOM Managers may assign only evaluators appointed within their MAJCOM.';
+    end if;
   end if;
 
   select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb)
