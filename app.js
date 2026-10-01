@@ -34,6 +34,7 @@ let currentEventId=null,currentParticipantId=null,currentSection=0,currentRecord
 let filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};
 let ticker=null;
 let currentAccessProfile=null,currentAccessMembership=null;
+let gradingSyncLocked=false;
 
 function scopeOptions(role,majcom='',installationId=''){
  if(role==='majcom_manager'){
@@ -440,8 +441,24 @@ function showParticipantForm(existing=null){const e=event();if(eventClosed(e)){t
 function eventAnalytics(e=event()){const rows=e.participants.filter(p=>p.evaluation?.finalizedAt).map(p=>({p,ev:p.evaluation,score:scoring(p.evaluation,SKILLS[e.skillId])}));const pass=rows.filter(r=>r.ev.finalResult==='PASS').length,crit=rows.filter(r=>r.score.criticalFail).length,avg=rows.length?rows.reduce((a,r)=>a+(r.score.percent||0),0)/rows.length:null;const gaps={},contrib={};rows.forEach(r=>allItems(SKILLS[e.skillId]).forEach(i=>{const v=r.ev.ratings[i.id],k=i.id;if(v==='pass'||v==='fail'){gaps[k]=gaps[k]||{skill:SKILLS[e.skillId].shortName,id:i.id,text:i.text,critical:i.critical,fail:0,tested:0};gaps[k].tested++;if(v==='fail'){gaps[k].fail++;const d=r.ev.failureDetails[i.id];if(d?.contributor)contrib[d.contributorLabel]=(contrib[d.contributorLabel]||0)+1;}}}));return {rows,pass,crit,avg,gaps,contrib};}
 function renderEventAnalytics(){const a=eventAnalytics();$('eventKpis').innerHTML=[['Roster',event().participants.length,'participants'],['Finalized',a.rows.length,'formal measures'],['Pass rate',pct(a.rows.length?a.pass/a.rows.length:null),`${a.pass}/${a.rows.length}`],['Mean score',pct(a.avg),'NT excluded'],['Critical fail',pct(a.rows.length?a.crit/a.rows.length:null),`${a.crit} evaluations`]].map(([x,y,z])=>`<div class="kpi"><small>${x}</small><strong>${y}</strong><span>${z}</span></div>`).join('');renderGapTable(a.gaps,'eventGapTable');const total=Object.values(a.contrib).reduce((x,y)=>x+y,0);$('eventContributors').innerHTML=total?Object.entries(a.contrib).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<div class="rootRow"><div><b>${esc(k)}</b><div class="rootRowBar"><i style="width:${Math.max(5,Math.round(n/total*100))}%"></i></div></div><b>${n}</b></div>`).join(''):'<div class="empty">No classified failures.</div>';}
 
-function openEvaluation(pid){currentParticipantId=pid;const p=participant(),e=event();if(!p.evaluation){if(eventClosed(e)){toast('Closed classes are read-only.');return renderEvent();}p.evaluation=makeEvaluation(e);saveDb();}currentSection=0;renderEvaluation();}
-function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
+function openEvaluation(pid){
+ currentParticipantId=pid;
+ const p=participant(),e=event();
+ if(!p)return;
+ if(!p.evaluation){
+  if(eventClosed(e)){toast('Closed classes are read-only.');return renderEvent();}
+  gradingSyncLocked=true;
+  SYNC?.pauseAutoSync?.();
+  p.evaluation=makeEvaluation(e);
+  saveDb();
+ }else if(!p.evaluation.finalizedAt){
+  gradingSyncLocked=true;
+  SYNC?.pauseAutoSync?.();
+ }
+ currentSection=0;
+ renderEvaluation();
+}
+function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
 function renderEvalKpis(){const st=scoring();$('scoreKpi').textContent=st.percent==null?'—':`${(st.percent*100).toFixed(1)}%`;$('critKpi').textContent=st.criticalFail;$('unresolvedKpi').textContent=st.unresolved;}
 function currentStopwatchElapsed(sw){return sw?.running?(sw.elapsedMs||0)+(now()-sw.startedAt):(sw?.elapsedMs||0);}
 function renderStopwatch(tickOnly=false){
@@ -470,7 +487,19 @@ function chooseContributor(id,mode){
 }
 function failureCommentStep(id,mode,contributor){const m=FAILURE_MODES.find(x=>x.id===mode),c=CONTRIBUTORS.find(x=>x.id===contributor),required=mode==='other-unclear';openModal(`Record FAIL — ${id}`,`<div class="reviewBox"><b>${esc(m.label)}</b><br>${esc(c.label)}</div><form id="failureSaveForm"><div class="formGrid"><label class="full"><span>Objective evaluator comment ${required?'*':'(optional)'}</span><textarea name="comment" rows="3" ${required?'required':''} placeholder="Document concise observable facts; avoid speculative labels"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Record FAIL</button></div></form>`);$('failureSaveForm').onsubmit=e=>{e.preventDefault();const comment=String(new FormData(e.target).get('comment')||'').trim();if(required&&!comment){alert('Other / unclear requires a brief objective comment.');return;}const ev=getEval();ev.ratings[id]='fail';ev.failureDetails[id]={mode,modeLabel:m.label,contributor,contributorLabel:c.label,comment,at:now()};saveDb();closeModal();renderCriteria();renderEvalKpis();};}
 function nextUnresolved(){const ev=getEval(),s=skill();const items=allItems(s);const start=items.findIndex(i=>s.sections[currentSection].items.some(x=>x.id===i.id));const ordered=items.slice(start).concat(items.slice(0,start));const hit=ordered.find(i=>{const r=ev.ratings[i.id],d=ev.failureDetails[i.id];return !r||r==='no'||(i.critical&&r==='nt')||(r==='fail'&&(!d?.mode||!d?.contributor||(d.mode==='other-unclear'&&!d.comment)));});if(!hit){toast('No unresolved criteria.');return;}currentSection=s.sections.findIndex(sec=>sec.items.some(i=>i.id===hit.id));renderCriteria();$('sectionSelect').value=String(currentSection);setTimeout(()=>document.getElementById(`crit-${hit.id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),0);}
-function reviewFinalize(){const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;if(!fin.ok){const issues=[];if(st.unresolved)issues.push(`${st.unresolved} criterion/classification issue(s)`);if(fin.running)issues.push('stop all running clocks');if(!fin.stopwatchReady)issues.push('start and stop the assessment stopwatch');alert(`Cannot finalize. ${issues.join('; ')}.`);return;}const predicted=(st.criticalFail===0&&st.percent>=s.threshold&&!st.stopwatchInvalid)?'PASS':'FAIL';const swMs=ev.stopwatch?.elapsedMs||0;openModal('Evaluation Review',`<div class="reviewBox"><h3>${predicted}</h3><p>Score: <b>${st.pass}/${st.denom} (${pct(st.percent)})</b> · NT excluded</p><p>Critical failures: <b>${st.criticalFail}</b></p><p>Assessment duration: <b>${fmtMs(swMs)}</b>${st.stopwatchInvalid?' · <b>time standard not met</b>':''}</p><p>PASS requires ≥ ${Math.round(s.threshold*100)}%, no failed critical criteria${s.stopwatch?.requiredForPass?', and the overall time standard':''}.</p></div><p>Finalization locks this formal measurement. Educational remediation should occur only after the measurement record is complete.</p><button id="finalizeConfirm" class="btn primary">Finalize ${predicted}</button>`);$('finalizeConfirm').onclick=()=>{ev.evaluatorName=$('evalName').value.trim();ev.evaluatorId=$('evalId').value.trim();ev.notes=$('overallNotes').value.trim();ev.finalizedAt=now();ev.finalResult=predicted;saveDb();closeModal();renderEvaluation();toast(`Evaluation finalized: ${predicted}`);};}
+function reviewFinalize(){const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;if(!fin.ok){const issues=[];if(st.unresolved)issues.push(`${st.unresolved} criterion/classification issue(s)`);if(fin.running)issues.push('stop all running clocks');if(!fin.stopwatchReady)issues.push('start and stop the assessment stopwatch');alert(`Cannot finalize. ${issues.join('; ')}.`);return;}const predicted=(st.criticalFail===0&&st.percent>=s.threshold&&!st.stopwatchInvalid)?'PASS':'FAIL';const swMs=ev.stopwatch?.elapsedMs||0;openModal('Evaluation Review',`<div class="reviewBox"><h3>${predicted}</h3><p>Score: <b>${st.pass}/${st.denom} (${pct(st.percent)})</b> · NT excluded</p><p>Critical failures: <b>${st.criticalFail}</b></p><p>Assessment duration: <b>${fmtMs(swMs)}</b>${st.stopwatchInvalid?' · <b>time standard not met</b>':''}</p><p>PASS requires ≥ ${Math.round(s.threshold*100)}%, no failed critical criteria${s.stopwatch?.requiredForPass?', and the overall time standard':''}.</p></div><p>Finalization locks this formal measurement. Educational remediation should occur only after the measurement record is complete.</p><button id="finalizeConfirm" class="btn primary">Finalize ${predicted}</button>`);$('finalizeConfirm').onclick=async()=>{
+ ev.evaluatorName=$('evalName').value.trim();
+ ev.evaluatorId=$('evalId').value.trim();
+ ev.notes=$('overallNotes').value.trim();
+ ev.finalizedAt=now();
+ ev.finalResult=predicted;
+ saveDb();
+ gradingSyncLocked=false;
+ closeModal();
+ renderEvaluation();
+ toast(`Evaluation finalized: ${predicted}`);
+ try{await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
+};}
 function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
 
 function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',BUILD.versionName]);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
@@ -635,7 +664,7 @@ $('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHo
 $('syncStatusBtn').onclick=openSyncPanel;
 window.addEventListener('fieldready:remote-db',e=>{
  const remote=normalizeDb(e.detail?.db);
- if(!remote)return;
+ if(!remote||gradingSyncLocked)return;
 
  const activeView=document.querySelector('.view.active')?.id||'homeView';
 
@@ -662,11 +691,7 @@ window.addEventListener('fieldready:remote-db',e=>{
 });
 SYNC?.init?.({
  getDb:()=>db,
- shouldDeferAutoSync:()=>{
-  const activeView=document.querySelector('.view.active')?.id;
-  const ev=getEval();
-  return activeView==='evalView'&&!!ev&&!ev.finalizedAt;
- }
+ shouldDeferAutoSync:()=>gradingSyncLocked
 });
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 renderHome();

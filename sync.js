@@ -294,19 +294,32 @@ async function syncNow(dbArg,opts={}){
  if(!opts.force&&shouldDeferAutoSync()){renderStatus();return;}
  if(busy){rerunAfterBusy=true;return;}
  if(!configured()||!navigator.onLine)return;
- await ensureSession();if(!session()?.access_token){renderStatus();return;}
+
+ // Snapshot local state before any network work begins. If grading starts
+ // while this sync is in flight, later edits cannot leak into this sync.
+ const source=dbArg||getDb?.();
+ if(!source)throw new Error('No local FieldReady database is available.');
+ const db=typeof structuredClone==='function'
+  ?structuredClone(source)
+  :JSON.parse(JSON.stringify(source));
+
+ await ensureSession();
+ if(!session()?.access_token){renderStatus();return;}
+ if(!opts.force&&shouldDeferAutoSync()){renderStatus();return;}
+
  busy=true;renderStatus();
  const startedGeneration=changeGeneration;
  try{
-  const db=dbArg||getDb?.();
-  if(!db)throw new Error('No local FieldReady database is available.');
   const profile=await currentProfile();
   const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await currentMembership():null;
+  if(!opts.force&&shouldDeferAutoSync())return;
   const [serverEvaluations,serverEvents]=await Promise.all([
    getAll(CFG.tables.evaluations),
    getAll(CFG.tables.events)
   ]);
+  if(!opts.force&&shouldDeferAutoSync())return;
   await push(db,serverEvaluations,serverEvents,profile,membership);
+  if(!opts.force&&shouldDeferAutoSync())return;
   const remote=await pull(db);
 
   // A local edit occurred while this sync was in flight. Do not let the
@@ -347,6 +360,13 @@ function noteLocalChange(){
  clearTimeout(timer);
  timer=setTimeout(()=>syncNow().catch(()=>{}),CFG.autoSyncDelayMs||1500);
 }
+function pauseAutoSync(){
+ changeGeneration++;
+ rerunAfterBusy=false;
+ clearTimeout(timer);
+ timer=null;
+ renderStatus();
+}
 function resumeAutoSync(){
  if(shouldDeferAutoSync())return;
  const m=readMeta();
@@ -365,6 +385,6 @@ window.FieldReadySync=Object.freeze({
  init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
  approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
- syncNow,noteLocalChange,resumeAutoSync
+ syncNow,noteLocalChange,pauseAutoSync,resumeAutoSync
 });
 })();
