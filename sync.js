@@ -246,6 +246,14 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  else if(profile?.role==='program_manager'||profile?.role==='majcom_manager')x=managerPushScope(x,profile,membership,serverEvents,userId);
 
  const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));
+ const closedEventIds=new Set((serverEvents||[]).filter(r=>r.closed_at).map(r=>r.id));
+ const inOpenEvent=r=>!closedEventIds.has(r.event_id||r.id);
+ x={
+  events:x.events.filter(inOpenEvent),
+  participants:x.participants.filter(inOpenEvent),
+  evaluations:x.evaluations.filter(inOpenEvent),
+  voids:x.voids.filter(inOpenEvent)
+ };
  const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));
  const serverEventIds=new Set((serverEvents||[]).map(r=>r.id));
  const eventWireRows=x.events.map(r=>({
