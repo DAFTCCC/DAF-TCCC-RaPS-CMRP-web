@@ -240,9 +240,12 @@ function openApproveRequest(r){
 }
 function openManageUser(p,membership){
  if(!p)return;
- openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active?'checked':''}> Account active</label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button>${p.user_id!==SYNC.session()?.user?.id?'<button id="removeUserAccessBtn" class="btn danger ghost" type="button">Remove access</button>':''}</div></form>`);
+ const evaluatorScope=p.role==='evaluator'?`<label class="full"><span>Authorize evaluator for MAJCOM</span><select id="evaluatorMajcomSelect"><option value="">Select MAJCOM</option>${LOC.commands.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>`:'';
+ openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active?'checked':''}> Account active</label>${evaluatorScope}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button>${p.role==='evaluator'?'<button id="authorizeEvaluatorMajcomBtn" class="btn ghost" type="button">Authorize MAJCOM</button>':''}${p.user_id!==SYNC.session()?.user?.id?'<button id="removeUserAccessBtn" class="btn danger ghost" type="button">Remove access</button>':''}</div></form>`);
  const form=$('manageAccountForm');wireAdminRoleScope(form,membership);
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{await SYNC.setUserAccess(p.user_id,fd.get('active')==='on',fd.get('role'),fd.get('scopeType')||null,fd.get('scopeValue')||null);closeModal();toast('User access updated.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to update access.');}};
+ const authBtn=$('authorizeEvaluatorMajcomBtn');
+ if(authBtn)authBtn.onclick=async()=>{const maj=$('evaluatorMajcomSelect')?.value||'';if(!maj){alert('Select a MAJCOM first.');return;}authBtn.disabled=true;try{await SYNC.appointEvaluator(p.user_id,maj);toast('Evaluator authorized for '+commandName(maj)+'.');}catch(ex){alert(ex?.message||'Unable to authorize evaluator.');}finally{authBtn.disabled=false;}};
  const removeBtn=$('removeUserAccessBtn');
  if(removeBtn)removeBtn.onclick=async()=>{if(!confirm('Remove this user\'s FieldReady access? Historical study records will be retained.'))return;removeBtn.disabled=true;try{await SYNC.setUserAccess(p.user_id,false,'evaluator',null,null);closeModal();toast('User access removed.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to remove user access.');removeBtn.disabled=false;}};
 }
@@ -334,7 +337,7 @@ async function showEventForm(existing=null){
   alert(ex?.message||'Unable to load evaluator assignments.');
   return;
  }
- const evaluatorPool=team.evaluators||[];
+ let evaluatorPool=[];
  const assignedIds=new Set((assigned||[]).map(x=>x.user_id));
  const scopedInstallation=scope.role==='program_manager'?installation(scope.installationId):null;
  const allowedCommands=scope.role==='program_manager'
@@ -345,31 +348,52 @@ async function showEventForm(existing=null){
  const selectedCommand=existing?.majcom||scope.majcom||(allowedCommands.length===1?allowedCommands[0].id:'');
  const commands=allowedCommands.map(c=>`<option value="${c.id}" ${selectedCommand===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
  const skills=Object.values(SKILLS).map(s=>`<option value="${s.id}" ${(existing?.skillId||'CMC')===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
- const evaluatorOptions=evaluatorPool.map(p=>`<option value="${p.user_id}" ${assignedIds.has(p.user_id)?'selected':''}>${esc(p.display_name||p.email||p.user_id)} · ${esc(p.email||'')}</option>`).join('');
  openModal(existing?'Edit Study Event':'New Study Event',`<form id="eventForm"><div class="formGrid">
  <label><span>Event / class name *</span><input name="name" required value="${esc(existing?.name||'')}"></label><label><span>Date *</span><input name="date" type="date" required value="${esc(existing?.date||isoDate())}"></label>
  <label><span>Skill / assessment *</span><select name="skillId" ${existing?'disabled':''}>${skills}</select></label><label><span>Event type</span><select name="eventType"><option value="study" ${existing?.eventType!=='calibration'?'selected':''}>Study measurement</option><option value="calibration" ${existing?.eventType==='calibration'?'selected':''}>Evaluator calibration</option></select></label>
  <label><span>Study timepoint *</span><select name="timepoint"><option value="baseline">Baseline</option><option value="3-month">3-Month</option><option value="6-month">6-Month</option></select></label><label><span>Study arm *</span><select name="studyArm"><option>Control</option><option>Frequency-Based</option><option>Deliberate Practice</option></select></label>
  <label class="full"><span>Supported MAJCOM / Command *</span><select name="majcom" required><option value="">Select command</option>${commands}</select></label>
  <label class="full"><span>Home installation *</span><select name="homeInstallationId" required></select></label>
- <label class="full"><span>Assigned evaluators</span><select name="assignedEvaluators" multiple size="5">${evaluatorOptions}</select><small>${scope.role==='program_manager'?'Only evaluators appointed to your program are available.':scope.role==='majcom_manager'?'Evaluators appointed within your MAJCOM are available.':'All active evaluators are available.'}</small></label>
+ <label class="full"><span>Lead evaluator</span><select name="leadEvaluatorId" required><option value="">Select eligible evaluator</option></select><small>Filtered to evaluators authorized for the selected MAJCOM.</small></label>
+ <label class="full"><span>Additional evaluators</span><select name="assignedEvaluators" multiple size="5"></select><small>Select any additional evaluators authorized for this class.</small></label>
  <label class="full"><span>Unit / organization</span><input name="unit" value="${esc(existing?.unit||'')}" placeholder="e.g., 15 MDG"></label>
  <label class="full"><span>Training location</span><input name="trainingLocation" value="${esc(existing?.trainingLocation||'')}" placeholder="Defaults to home installation; expeditionary locations may be entered here"></label>
- <label><span>Lead evaluator</span><input name="leadEvaluator" value="${esc(existing?.leadEvaluator||'')}"></label><label><span>Evaluator ID</span><input name="evaluatorId" value="${esc(existing?.evaluatorId||'')}"></label>
+ <input type="hidden" name="leadEvaluator"><input type="hidden" name="evaluatorId">
  <label><span>Scenario name</span><input name="scenario" value="${esc(existing?.scenario||'')}"></label><label><span>Scenario version</span><input name="scenarioVersion" value="${esc(existing?.scenarioVersion||'1')}"></label>
  <label class="full"><span>Study / scenario notes</span><textarea name="notes" rows="2">${esc(existing?.notes||'')}</textarea></label>
  </div><div class="actionsRow spaced"><button class="btn primary" type="submit">${existing?'Save Event':'Create Event'}</button></div></form>`);
  const f=$('eventForm');f.elements.timepoint.value=existing?.timepoint||'baseline';f.elements.studyArm.value=existing?.studyArm||'Control';
+ async function fillEvaluators(){
+  const maj=String(f.elements.majcom.value||'');
+  const lead=f.elements.leadEvaluatorId;
+  const extras=f.elements.assignedEvaluators;
+  lead.innerHTML='<option value="">Select eligible evaluator</option>';
+  extras.innerHTML='';
+  evaluatorPool=[];
+  if(!maj)return;
+  try{evaluatorPool=await SYNC.eligibleEvaluators(maj);}catch(ex){alert(ex?.message||'Unable to load eligible evaluators.');return;}
+  const existingLeadId=existing?.evaluatorId||'';
+  evaluatorPool.forEach(p=>{
+   const label=`${p.display_name||p.email||p.user_id} · ${p.email||''}`;
+   const o=document.createElement('option');o.value=p.user_id;o.textContent=label;if(p.user_id===existingLeadId)o.selected=true;lead.appendChild(o);
+   const x=document.createElement('option');x.value=p.user_id;x.textContent=label;if(assignedIds.has(p.user_id)&&p.user_id!==existingLeadId)x.selected=true;extras.appendChild(x);
+  });
+ }
  function fillBases(){const maj=f.elements.majcom.value;let list=LOC.installations.filter(i=>i.active!==false&&(!maj||(i.commands||[]).includes(maj)));if(scope.role==='program_manager')list=list.filter(i=>i.id===scope.installationId);list=list.sort((a,b)=>a.name.localeCompare(b.name));f.elements.homeInstallationId.innerHTML='<option value="">Select installation</option>'+list.map(i=>`<option value="${i.id}">${esc(installationLabel(i))}</option>`).join('')+(scope.role==='program_manager'||scope.role==='majcom_manager'?'':'<option value="__OTHER__">Other / expeditionary / not listed</option>');if(existing?.homeInstallationId&&list.some(i=>i.id===existing.homeInstallationId))f.elements.homeInstallationId.value=existing.homeInstallationId;else if(scope.role==='program_manager'&&scope.installationId&&list.some(i=>i.id===scope.installationId))f.elements.homeInstallationId.value=scope.installationId;}
  if(scope.role==='program_manager'&&selectedCommand)f.elements.majcom.value=selectedCommand;
  if(scope.role==='majcom_manager')f.elements.majcom.value=scope.majcom||'';
- f.elements.majcom.onchange=fillBases;fillBases();
+ f.elements.majcom.onchange=()=>{fillBases();fillEvaluators();};fillBases();fillEvaluators();
  f.onsubmit=async e=>{
   e.preventDefault();
   const submit=f.querySelector('button[type="submit"]');submit.disabled=true;
   const d=Object.fromEntries(new FormData(f).entries());
   delete d.assignedEvaluators;
-  const selectedEvaluatorIds=[...f.elements.assignedEvaluators.selectedOptions].map(o=>o.value);
+  const leadEvaluatorId=String(f.elements.leadEvaluatorId.value||'');
+  delete d.leadEvaluatorId;
+  const leadProfile=evaluatorPool.find(p=>p.user_id===leadEvaluatorId);
+  d.leadEvaluator=leadProfile?.display_name||leadProfile?.email||'';
+  d.evaluatorId=leadEvaluatorId;
+  const selectedEvaluatorIds=[...new Set([leadEvaluatorId,...[...f.elements.assignedEvaluators.selectedOptions].map(o=>o.value)].filter(Boolean))];
   d.majcom=String(f.elements.majcom.value||'');
   d.homeInstallationId=String(f.elements.homeInstallationId.value||'');
   if(d.homeInstallationId==='__OTHER__'){const custom=prompt('Enter home installation / location name:');if(!custom){submit.disabled=false;return;}d.homeInstallationName=custom;d.homeInstallationId='';}

@@ -146,9 +146,10 @@ async function setUserAccess(userId,active,role,scopeType=null,scopeValue=null){
  return rpc('fr_set_user_access',{p_user_id:userId,p_active:!!active,p_role:role,p_scope_type:scopeType,p_scope_value:scopeValue});
 }
 async function managerTeam(){return rpc('fr_manager_team',{});}
-async function appointEvaluator(userId){return rpc('fr_appoint_evaluator',{p_evaluator_id:userId});}
-async function removeAppointedEvaluator(userId){return rpc('fr_remove_appointed_evaluator',{p_evaluator_id:userId});}
+async function appointEvaluator(userId,majcom=null){return rpc('fr_appoint_evaluator',{p_evaluator_id:userId,p_majcom:majcom});}
+async function removeAppointedEvaluator(userId,majcom=null){return rpc('fr_remove_appointed_evaluator',{p_evaluator_id:userId,p_majcom:majcom});}
 async function assignProgramManager(userId,installationId,majcom){return rpc('fr_assign_program_manager',{p_user_id:userId,p_installation:installationId,p_majcom:majcom});}
+async function eligibleEvaluators(majcom){return rpc('fr_eligible_evaluators',{p_majcom:majcom});}
 async function getEventEvaluators(eventId){return rpc('fr_get_event_evaluators',{p_event_id:eventId});}
 async function setEventEvaluators(eventId,userIds){return rpc('fr_set_event_evaluators',{p_event_id:eventId,p_user_ids:userIds||[]});}
 async function closeEvent(eventId,csv,fileName){return rpc('fr_close_event',{p_event_id:eventId,p_csv:csv,p_file_name:fileName});}
@@ -346,7 +347,7 @@ function init(opts={}){getDb=opts.getDb||getDb;renderStatus();window.addEventLis
 window.FieldReadySync=Object.freeze({
  init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,
- approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
+ approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
  syncNow,noteLocalChange
 });
 })();
