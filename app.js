@@ -371,7 +371,8 @@ async function showEventForm(existing=null){
   extras.innerHTML='';
   evaluatorPool=[];
   if(!maj)return;
-  try{evaluatorPool=await SYNC.eligibleEvaluators(maj);}catch(ex){alert(ex?.message||'Unable to load eligible evaluators.');return;}
+  const inst=String(f.elements.homeInstallationId.value||'');
+  try{evaluatorPool=await SYNC.eligibleEvaluators(maj,inst||null);}catch(ex){alert(ex?.message||'Unable to load eligible evaluators.');return;}
   const existingLeadId=existing?.evaluatorId||'';
   evaluatorPool.forEach(p=>{
    const label=`${p.display_name||p.email||p.user_id} · ${p.email||''}`;
@@ -382,7 +383,9 @@ async function showEventForm(existing=null){
  function fillBases(){const maj=f.elements.majcom.value;let list=LOC.installations.filter(i=>i.active!==false&&(!maj||(i.commands||[]).includes(maj)));if(scope.role==='program_manager')list=list.filter(i=>i.id===scope.installationId);list=list.sort((a,b)=>a.name.localeCompare(b.name));f.elements.homeInstallationId.innerHTML='<option value="">Select installation</option>'+list.map(i=>`<option value="${i.id}">${esc(installationLabel(i))}</option>`).join('')+(scope.role==='program_manager'||scope.role==='majcom_manager'?'':'<option value="__OTHER__">Other / expeditionary / not listed</option>');if(existing?.homeInstallationId&&list.some(i=>i.id===existing.homeInstallationId))f.elements.homeInstallationId.value=existing.homeInstallationId;else if(scope.role==='program_manager'&&scope.installationId&&list.some(i=>i.id===scope.installationId))f.elements.homeInstallationId.value=scope.installationId;}
  if(scope.role==='program_manager'&&selectedCommand)f.elements.majcom.value=selectedCommand;
  if(scope.role==='majcom_manager')f.elements.majcom.value=scope.majcom||'';
- f.elements.majcom.onchange=()=>{fillBases();fillEvaluators();};fillBases();fillEvaluators();
+ f.elements.majcom.onchange=()=>{fillBases();fillEvaluators();};
+ f.elements.homeInstallationId.onchange=fillEvaluators;
+ fillBases();fillEvaluators();
  f.onsubmit=async e=>{
   e.preventDefault();
   const submit=f.querySelector('button[type="submit"]');submit.disabled=true;
