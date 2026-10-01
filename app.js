@@ -194,7 +194,10 @@ function openInviteUser(){
 }
 
 function download(name,text,type='text/plain'){const blob=new Blob([text],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},0);}
-function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}\nfunction eventClosed(e=event()){return !!e?.closedAt;}\nfunction canManageEventLifecycle(){return ['program_manager','majcom_manager','enterprise'].includes(currentAccessProfile?.role||'');}\nfunction canDeleteEvent(){return currentAccessProfile?.role==='enterprise';}
+function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
+function eventClosed(e=event()){return !!e?.closedAt;}
+function canManageEventLifecycle(){return ['program_manager','majcom_manager','enterprise'].includes(currentAccessProfile?.role||'');}
+function canDeleteEvent(){return currentAccessProfile?.role==='enterprise';}
 
 function makeEvaluation(e){
  const s=SKILLS[e.skillId];const timers={};(s.timers||[]).forEach(t=>timers[t.id]={elapsedMs:0,running:false,startedAt:null,completed:false,valid:null});
