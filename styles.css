@@ -20,3 +20,14 @@
 #adminView .status{white-space:nowrap}
 #adminView .actionsRow{min-width:max-content}
 .modal{z-index:400}
+
+
+/* FieldReady v4.3 RaPS timing hardening */
+.timerControl{min-height:48px}
+.timerHistory{margin-top:9px;border-top:1px solid var(--line);padding-top:7px;display:grid;gap:5px}
+.timerHistoryRow{display:flex;justify-content:space-between;gap:12px;font-size:.74rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.activeTimersCard{border:2px solid #d6a64a;background:#fffaf0}
+.activeTimers{display:grid;gap:8px}
+.activeTimerRow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:1px solid #ead7a7;background:#fff;padding:10px 12px;border-radius:10px}
+.activeTimerRow strong{font-size:1.05rem;font-variant-numeric:tabular-nums}
+@media(max-width:620px){.activeTimerRow{grid-template-columns:1fr}.timerBtns .btn{min-height:50px}.timerHistoryRow{align-items:flex-start;flex-direction:column;gap:2px}}
