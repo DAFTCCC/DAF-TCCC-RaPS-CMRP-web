@@ -37,6 +37,7 @@ let filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};
 let ticker=null;
 let currentAccessProfile=null,currentAccessMembership=null;
 let gradingSyncLocked=false;
+let evalWakeLock=null,evalBackgroundedAt=null;
 
 function scopeOptions(role,majcom='',installationId=''){
  if(role==='majcom_manager'){
@@ -140,7 +141,7 @@ function installation(id){return LOC.installations.find(i=>i.id===id)||null;}
 function installationLabel(i){if(!i)return '';const suffix=i.state?`, ${i.state}`:(i.country&&i.country!=='USA'?`, ${i.country}`:'');return `${i.name}${suffix}`;}
 function eventHomeName(e){return installation(e.homeInstallationId)?.name||e.homeInstallationName||'—';}
 function getEval(){return participant()?.evaluation||null;}
-function showView(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});}
+function showView(id){if(id!=='evalView')releaseEvalWakeLock();document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});}
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200);}
 function openModal(title,html){$('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden');$('modal').setAttribute('aria-hidden','false');}
 function closeModal(){$('modal').classList.add('hidden');$('modal').setAttribute('aria-hidden','true');$('modalBody').innerHTML='';}
@@ -497,7 +498,7 @@ function openEvaluation(pid){
  currentSection=0;
  renderEvaluation();
 }
-function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
+function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();requestEvalWakeLock();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
 function renderEvalKpis(){const st=scoring();$('scoreKpi').textContent=st.percent==null?'—':`${(st.percent*100).toFixed(1)}%`;$('critKpi').textContent=st.criticalFail;$('unresolvedKpi').textContent=st.unresolved;}
 function stopwatchElapsed(sw,at=now(),monoAt=monoNow()){
  if(!sw)return 0;
@@ -630,6 +631,23 @@ function renderActiveTimers(){
  $('activeTimersCard').classList.toggle('hidden',active.length===0);$('activeTimerCount').textContent=String(active.length);
  $('activeTimers').innerHTML=active.map(d=>{const x=currentTimerInstance(d.id,ev),recovery=timerNeedsRecovery(x);return `<div class="activeTimerRow"><span><b>${esc(d.label)}</b> #${x.index}${recovery?' · RECOVERY REQUIRED':x.paused?` · ${x.pauseKind==='admin'?'ADMIN HOLD':'PAUSED'}`:''}</span><strong>${recovery?'VOID / RESTART':fmtMs(timerDuration(d,x))}</strong></div>`;}).join('');
 }
+function evaluationTimingUnresolved(){
+ const ev=getEval(),s=skill();if(!ev||!s)return false;
+ if(ev.stopwatch?.running||ev.stopwatch?.recoveryRequired)return true;
+ return (s.timers||[]).some(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.wallStop&&!x.voided&&(x.running||x.paused||timerNeedsRecovery(x)));});
+}
+async function requestEvalWakeLock(){
+ if(!$('evalView')?.classList.contains('active')||getEval()?.finalizedAt||!('wakeLock' in navigator))return;
+ try{if(!evalWakeLock||evalWakeLock.released)evalWakeLock=await navigator.wakeLock.request('screen');}catch{}
+}
+async function releaseEvalWakeLock(){
+ try{if(evalWakeLock&&!evalWakeLock.released)await evalWakeLock.release();}catch{}
+ evalWakeLock=null;
+}
+function safeBackFromEvaluation(){
+ if(evaluationTimingUnresolved()){alert('Assessment timing is still active, paused, or requires recovery. Stop, void, or reset the affected timing record before leaving this evaluation.');return;}
+ renderEvent();
+}
 function renderCriteria(){const s=skill(),ev=getEval(),sec=s.sections[currentSection];const locked=!!ev.finalizedAt;$('criteriaList').innerHTML=sec.items.map(i=>{const r=ev.ratings[i.id]||'',d=ev.failureDetails[i.id];return `<div class="criterion ${i.critical?'critical ':''}${r}" id="crit-${i.id}"><div><div class="criterionCode">${esc(i.id)}${i.critical?'<span class="critBadge">CRITICAL</span>':''}</div><p>${esc(i.text)}</p></div><div class="ratingBtns">${['pass','fail','nt','no'].map(v=>{const lab=v==='pass'?'PASS':v==='fail'?'FAIL':v==='nt'?'NT':'N/O';const disabled=locked||(v==='nt'&&i.critical);return `<button class="ratingBtn ${v} ${r===v?'active':''}" data-rate="${v}" data-item="${i.id}" ${disabled?'disabled':''}>${lab}</button>`;}).join('')}</div>${r==='fail'&&d?`<div class="failureDetail"><b>${esc(d.modeLabel)}</b> → ${esc(d.contributorLabel)}${d.comment?` · ${esc(d.comment)}`:''}</div>`:''}</div>`;}).join('');document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>setRating(b.dataset.item,b.dataset.rate));$('prevSectionBtn').disabled=currentSection===0;$('nextSectionBtn').disabled=currentSection===s.sections.length-1;}
 function setRating(id,rating){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||!i)return;if(rating==='fail')return beginFailureClassification(id);if(rating==='nt'&&i.critical){alert('Critical criteria cannot be marked NT.');return;}if(rating==='nt')return requestNt(id);ev.ratings[id]=rating;if(rating!=='fail')delete ev.failureDetails[id];saveDb();renderCriteria();renderEvalKpis();}
 function requestNt(id){openModal('Not Tested — scenario did not elicit criterion',`<p>NT may be used only for a <b>noncritical criterion</b> that the approved scenario did not elicit. It may not excuse an observed error or omission.</p><form id="ntForm"><div class="formGrid"><label class="full"><span>Objective scenario note (optional)</span><textarea name="detail" rows="3" placeholder="Briefly document why the approved scenario did not elicit this criterion"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Apply NT</button></div></form>`);$('ntForm').onsubmit=e=>{e.preventDefault();const ev=getEval();ev.ratings[id]='nt';ev.ntReasons[id]={code:'scenario-not-elicited',label:'Approved scenario did not elicit criterion',detail:new FormData(e.target).get('detail')||'',at:now()};delete ev.failureDetails[id];saveDb();closeModal();renderCriteria();renderEvalKpis();};}
@@ -643,19 +661,40 @@ function chooseContributor(id,mode){
 }
 function failureCommentStep(id,mode,contributor){const m=FAILURE_MODES.find(x=>x.id===mode),c=CONTRIBUTORS.find(x=>x.id===contributor),required=mode==='other-unclear';openModal(`Record FAIL — ${id}`,`<div class="reviewBox"><b>${esc(m.label)}</b><br>${esc(c.label)}</div><form id="failureSaveForm"><div class="formGrid"><label class="full"><span>Objective evaluator comment ${required?'*':'(optional)'}</span><textarea name="comment" rows="3" ${required?'required':''} placeholder="Document concise observable facts; avoid speculative labels"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Record FAIL</button></div></form>`);$('failureSaveForm').onsubmit=e=>{e.preventDefault();const comment=String(new FormData(e.target).get('comment')||'').trim();if(required&&!comment){alert('Other / unclear requires a brief objective comment.');return;}const ev=getEval();ev.ratings[id]='fail';ev.failureDetails[id]={mode,modeLabel:m.label,contributor,contributorLabel:c.label,comment,at:now()};saveDb();closeModal();renderCriteria();renderEvalKpis();};}
 function nextUnresolved(){const ev=getEval(),s=skill();const items=allItems(s);const start=items.findIndex(i=>s.sections[currentSection].items.some(x=>x.id===i.id));const ordered=items.slice(start).concat(items.slice(0,start));const hit=ordered.find(i=>{const r=ev.ratings[i.id],d=ev.failureDetails[i.id];return !r||r==='no'||(i.critical&&r==='nt')||(r==='fail'&&(!d?.mode||!d?.contributor||(d.mode==='other-unclear'&&!d.comment)));});if(!hit){toast('No unresolved criteria.');return;}currentSection=s.sections.findIndex(sec=>sec.items.some(i=>i.id===hit.id));renderCriteria();$('sectionSelect').value=String(currentSection);setTimeout(()=>document.getElementById(`crit-${hit.id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),0);}
-function reviewFinalize(){const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;if(!fin.ok){const issues=[];if(st.unresolved)issues.push(`${st.unresolved} criterion/classification issue(s)`);if(fin.running)issues.push('stop all running clocks');if(!fin.stopwatchReady)issues.push('start and stop the assessment stopwatch');alert(`Cannot finalize. ${issues.join('; ')}.`);return;}const predicted=(st.criticalFail===0&&st.percent>=s.threshold&&!st.stopwatchInvalid)?'PASS':'FAIL';const swMs=ev.stopwatch?.elapsedMs||0;openModal('Evaluation Review',`<div class="reviewBox"><h3>${predicted}</h3><p>Score: <b>${st.pass}/${st.denom} (${pct(st.percent)})</b> · NT excluded</p><p>Critical failures: <b>${st.criticalFail}</b></p><p>Assessment duration: <b>${fmtMs(swMs)}</b>${st.stopwatchInvalid?' · <b>time standard not met</b>':''}</p><p>PASS requires ≥ ${Math.round(s.threshold*100)}%, no failed critical criteria${s.stopwatch?.requiredForPass?', and the overall time standard':''}.</p></div><p>Finalization locks this formal measurement. Educational remediation should occur only after the measurement record is complete.</p><button id="finalizeConfirm" class="btn primary">Finalize ${predicted}</button>`);$('finalizeConfirm').onclick=async()=>{
- ev.evaluatorName=$('evalName').value.trim();
- ev.evaluatorId=$('evalId').value.trim();
- ev.notes=$('overallNotes').value.trim();
- ev.finalizedAt=now();
- ev.finalResult=predicted;
- saveDb();
- gradingSyncLocked=false;
- closeModal();
- renderEvaluation();
- toast(`Evaluation finalized: ${predicted}`);
- try{await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
-};}
+function reviewFinalize(){
+ const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;
+ if(!fin.ok){
+  const issues=[];
+  if(st.unresolved)issues.push(`${st.unresolved} criterion/classification issue(s)`);
+  if(fin.activeTimerDefs?.length)issues.push(`${fin.activeTimerDefs.length} active/paused/recovered clinical timer(s)`);
+  if(fin.timerPassMissing?.length)issues.push(`${fin.timerPassMissing.length} timer-linked PASS criterion/criteria without a met timing standard`);
+  if(fin.stopwatchRecovery)issues.push('assessment stopwatch requires recovery');
+  if(!fin.stopwatchReady)issues.push('start and stop the assessment stopwatch');
+  if(fin.running&&!fin.activeTimerDefs?.length&&!fin.stopwatchRecovery)issues.push('stop all running clocks');
+  alert(`Cannot finalize. ${issues.join('; ')}.`);
+  return;
+ }
+ const predicted=(st.criticalFail===0&&st.percent>=s.threshold&&!st.stopwatchInvalid)?'PASS':'FAIL';
+ const swMs=stopwatchElapsed(ev.stopwatch);
+ const timerLines=(s.timers||[]).map(d=>{const status=timerAggregateStatus(d,ev),store=timerStore(d.id,ev),used=store.instances.filter(x=>x.wallStart&&!x.voided);return `<div class="recordMetric"><span>${esc(d.label)}</span><b>${esc(used.length?status.toUpperCase():'NOT TRIGGERED')}</b></div>`;}).join('');
+ const failed=allItems(s).filter(i=>ev.ratings[i.id]==='fail');
+ const failLines=failed.length?failed.slice(0,8).map(i=>`<li><b>${esc(i.id)}${i.critical?' · CRITICAL':''}</b> — ${esc(i.text)}</li>`).join(''):'<li>None</li>';
+ openModal('Evaluation Review',`<div class="reviewBox"><h3>${predicted}</h3><p>Score: <b>${st.pass}/${st.denom} (${pct(st.percent)})</b> · NT excluded</p><p>Critical failures: <b>${st.criticalFail}</b></p><p>Assessment duration: <b>${fmtMs(swMs)}</b>${st.stopwatchInvalid?' · <b>time standard not met</b>':''}</p><p>PASS requires ≥ ${Math.round(s.threshold*100)}%, no failed critical criteria${s.stopwatch?.requiredForPass?', and the overall time standard':''}.</p></div><h3>Timing review</h3>${timerLines||'<p class="tiny">No skill-specific timers.</p>'}<h3>Failed criteria</h3><ul>${failLines}</ul><p>Finalization locks this formal measurement. Educational remediation should occur only after the measurement record is complete.</p><button id="finalizeConfirm" class="btn primary">Finalize ${predicted}</button>`);
+ $('finalizeConfirm').onclick=async()=>{
+  ev.evaluatorName=$('evalName').value.trim();
+  ev.evaluatorId=$('evalId').value.trim();
+  ev.notes=$('overallNotes').value.trim();
+  ev.finalizedAt=now();
+  ev.finalResult=predicted;
+  saveDb();
+  gradingSyncLocked=false;
+  closeModal();
+  renderEvaluation();
+  releaseEvalWakeLock();
+  toast(`Evaluation finalized: ${predicted}`);
+  try{await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
+ };
+}
 function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
 
 function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',BUILD.versionName]);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
@@ -815,7 +854,7 @@ async function restoreAuthorizedSession(){
 handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
 $('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('closeEventBtn').onclick=closeEvent;$('deleteEventBtn').onclick=deleteEvent;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
-$('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
+$('backRosterBtn').onclick=safeBackFromEvaluation;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
 
 $('syncStatusBtn').onclick=openSyncPanel;
 window.addEventListener('fieldready:remote-db',e=>{
@@ -849,6 +888,14 @@ SYNC?.init?.({
  getDb:()=>db,
  shouldDeferAutoSync:()=>gradingSyncLocked
 });
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden&&$('evalView')?.classList.contains('active')&&evaluationTimingUnresolved())evalBackgroundedAt=now();
+ if(!document.hidden&&$('evalView')?.classList.contains('active')){
+  requestEvalWakeLock();
+  if(evalBackgroundedAt){toast('Assessment resumed after app/background interruption. Verify all active timing states.');evalBackgroundedAt=null;}
+ }
+});
+window.addEventListener('beforeunload',e=>{if(evaluationTimingUnresolved()){e.preventDefault();e.returnValue='';}});
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 renderHome();
 })();
