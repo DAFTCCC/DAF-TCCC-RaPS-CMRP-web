@@ -9,6 +9,8 @@ const DB_KEY='FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data
 const uuid=()=>crypto.randomUUID?crypto.randomUUID():`id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const now=()=>Date.now();
+const monoNow=()=>typeof performance!=='undefined'&&Number.isFinite(performance.now?.())?performance.now():null;
+const RUNTIME_ID=`runtime-${uuid()}`;
 const pct=v=>v==null?'—':`${Math.round(v*100)}%`;
 const fmtMs=ms=>{const s=Math.max(0,Math.floor((ms||0)/1000));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 const isoDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
@@ -77,8 +79,39 @@ function normalizeDb(x){
  });
  return x;
 }
+function blankTimerInstance(id,index=0){
+ return {id:`${id}-${index+1}`,index:index+1,wallStart:null,wallStartMono:null,wallStop:null,runtimeId:null,running:false,paused:false,pauseKind:null,pauseStartedAt:null,pauseStartedMono:null,activeStartedAt:null,activeStartedMono:null,activeMs:0,continuousMs:0,maxContinuousMs:0,tacticalPauseMs:0,adminPauseMs:0,finalDurationMs:null,result:null,voided:false,voidReason:'',segments:[]};
+}
+function normalizeTimerStore(id,value){
+ if(value&&Array.isArray(value.instances)){
+  value.currentIndex=Number.isInteger(value.currentIndex)?value.currentIndex:(value.instances.length?value.instances.length-1:-1);
+  value.instances=value.instances.map((x,i)=>({...blankTimerInstance(id,i),...x,index:Number(x?.index)||i+1,id:x?.id||`${id}-${i+1}`,segments:Array.isArray(x?.segments)?x.segments:[]}));
+  return value;
+ }
+ const store={instances:[],currentIndex:-1};
+ if(value&&typeof value==='object'&&(value.running||value.completed||Number(value.elapsedMs)>0)){
+  const x=blankTimerInstance(id,0),elapsed=Math.max(0,Number(value.elapsedMs)||0);
+  x.wallStart=value.startedAt||now()-elapsed;
+  x.activeMs=elapsed;x.continuousMs=elapsed;x.maxContinuousMs=elapsed;
+  if(value.running){
+   x.running=true;x.runtimeId='legacy-runtime';x.activeStartedAt=x.wallStart;
+  }else{
+   x.wallStop=now();x.finalDurationMs=elapsed;x.result=value.valid===true?'met':value.valid===false?'notmet':null;
+  }
+  store.instances.push(x);store.currentIndex=0;
+ }
+ return store;
+}
+function normalizeStopwatch(sw){
+ const x={elapsedMs:0,running:false,startedAt:null,startedMono:null,runtimeId:null,completed:false,stoppedAt:null,recoveryRequired:false,...(sw||{})};
+ if(x.running&&x.runtimeId!==RUNTIME_ID)x.recoveryRequired=true;
+ return x;
+}
 function normalizeEvaluation(ev,e){
- ev.ratings=ev.ratings||{};ev.failureDetails=ev.failureDetails||{};ev.ntReasons=ev.ntReasons||{};ev.timers=ev.timers||{};ev.stopwatch=ev.stopwatch||{elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null};ev.notes=ev.notes||'';ev.finalizedAt=ev.finalizedAt||null;ev.finalResult=ev.finalResult||null;ev.evaluatorName=ev.evaluatorName||e?.leadEvaluator||'';ev.evaluatorId=ev.evaluatorId||e?.evaluatorId||'';
+ ev.ratings=ev.ratings||{};ev.failureDetails=ev.failureDetails||{};ev.ntReasons=ev.ntReasons||{};ev.timers=ev.timers||{};
+ Object.keys(ev.timers).forEach(id=>{ev.timers[id]=normalizeTimerStore(id,ev.timers[id]);});
+ ev.stopwatch=normalizeStopwatch(ev.stopwatch);
+ ev.notes=ev.notes||'';ev.finalizedAt=ev.finalizedAt||null;ev.finalResult=ev.finalResult||null;ev.evaluatorName=ev.evaluatorName||e?.leadEvaluator||'';ev.evaluatorId=ev.evaluatorId||e?.evaluatorId||'';
 }
 function legacyCmcId(id){
  const m=String(id||'').match(/^CMC-(CUF|TFC|M|A|R|C|H|P|ABX|W|S|CPR|COMMS|DOC|EVAC)-(\d+)$/);if(!m)return id;
@@ -263,8 +296,8 @@ function canManageEventLifecycle(){return ['program_manager','majcom_manager','e
 function canDeleteEvent(){return currentAccessProfile?.role==='enterprise';}
 
 function makeEvaluation(e){
- const s=SKILLS[e.skillId];const timers={};(s.timers||[]).forEach(t=>timers[t.id]={elapsedMs:0,running:false,startedAt:null,completed:false,valid:null});
- return {id:uuid(),startedAt:now(),finalizedAt:null,finalResult:null,ratings:{},failureDetails:{},ntReasons:{},timers,stopwatch:{elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null},evaluatorName:e.leadEvaluator||'',evaluatorId:e.evaluatorId||'',notes:'',appVersion:BUILD.versionName,skillSource:s.source,scenarioVersion:e.scenarioVersion||'1'};
+ const s=SKILLS[e.skillId];const timers={};(s.timers||[]).forEach(t=>timers[t.id]={instances:[],currentIndex:-1});
+ return {id:uuid(),startedAt:now(),finalizedAt:null,finalResult:null,ratings:{},failureDetails:{},ntReasons:{},timers,stopwatch:normalizeStopwatch(null),evaluatorName:e.leadEvaluator||'',evaluatorId:e.evaluatorId||'',notes:'',appVersion:BUILD.versionName,skillSource:s.source,scenarioVersion:e.scenarioVersion||'1'};
 }
 function scoring(ev=getEval(),s=skill()){
  if(!ev||!s)return {pass:0,fail:0,nt:0,no:0,ungraded:0,denom:0,percent:null,criticalFail:0,missingClass:0,unresolved:0,result:'IN PROGRESS'};
@@ -276,7 +309,13 @@ function scoring(ev=getEval(),s=skill()){
  return {pass,fail,nt,no,ungraded,denom,percent,criticalFail,missingClass,unresolved,result,stopwatchInvalid};
 }
 function finalizable(ev=getEval(),s=skill()){
- const score=scoring(ev,s);const running=!!ev?.stopwatch?.running||Object.values(ev?.timers||{}).some(t=>t.running);const stopwatchReady=!s?.stopwatch?.requiredForFinalization||!!ev?.stopwatch?.completed;return {ok:score.unresolved===0&&!running&&stopwatchReady,score,running,stopwatchReady};
+ const score=scoring(ev,s);
+ const activeTimerDefs=(s?.timers||[]).filter(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.voided&&!x.wallStop&&(x.running||x.paused||timerNeedsRecovery(x)));});
+ const timerPassMissing=(s?.timers||[]).filter(d=>d.linkedItemId&&ev?.ratings?.[d.linkedItemId]==='pass'&&timerAggregateStatus(d,ev)!=='met');
+ const stopwatchRecovery=!!ev?.stopwatch?.recoveryRequired;
+ const running=!!ev?.stopwatch?.running||activeTimerDefs.length>0;
+ const stopwatchReady=!s?.stopwatch?.requiredForFinalization||!!ev?.stopwatch?.completed;
+ return {ok:score.unresolved===0&&!running&&!stopwatchRecovery&&stopwatchReady&&timerPassMissing.length===0,score,running,stopwatchReady,stopwatchRecovery,activeTimerDefs,timerPassMissing};
 }
 
 function renderHome(){
