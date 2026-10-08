@@ -165,6 +165,13 @@
       <div class="evalStats"><div><small>SCORE</small><b id="scoreKpi">—</b></div><div><small>CRITICAL FAIL</small><b id="critKpi">0</b></div><div><small>UNRESOLVED</small><b id="unresolvedKpi">0</b></div></div>
     </div>
     <div id="assessmentStopwatch" class="assessmentStopwatch"></div>
+    <section id="activeTimersCard" class="panel activeTimersCard hidden">
+      <div class="panelHead">
+        <div><p class="eyebrow">ACTIVE TIMING</p><h2>Running / paused timers</h2></div>
+        <span id="activeTimerCount" class="status">0</span>
+      </div>
+      <div id="activeTimers" class="activeTimers"></div>
+    </section>
     <div id="timerStrip" class="timerStrip"></div>
     <div class="evalToolbar"><button id="prevSectionBtn" class="btn ghost">← Previous</button><select id="sectionSelect"></select><button id="nextUnresolvedBtn" class="btn ghost">Next Unresolved</button><button id="nextSectionBtn" class="btn ghost">Next →</button></div>
     <div id="criteriaList" class="criteriaList"></div>

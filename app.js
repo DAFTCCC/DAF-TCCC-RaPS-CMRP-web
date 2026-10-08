@@ -9,6 +9,8 @@ const DB_KEY='FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data
 const uuid=()=>crypto.randomUUID?crypto.randomUUID():`id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const now=()=>Date.now();
+const monoNow=()=>typeof performance!=='undefined'&&Number.isFinite(performance.now?.())?performance.now():null;
+const RUNTIME_ID=`runtime-${uuid()}`;
 const pct=v=>v==null?'—':`${Math.round(v*100)}%`;
 const fmtMs=ms=>{const s=Math.max(0,Math.floor((ms||0)/1000));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 const isoDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
@@ -35,6 +37,7 @@ let filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};
 let ticker=null;
 let currentAccessProfile=null,currentAccessMembership=null;
 let gradingSyncLocked=false;
+let evalWakeLock=null,evalBackgroundedAt=null;
 
 function scopeOptions(role,majcom='',installationId=''){
  if(role==='majcom_manager'){
@@ -77,8 +80,39 @@ function normalizeDb(x){
  });
  return x;
 }
+function blankTimerInstance(id,index=0){
+ return {id:`${id}-${index+1}`,index:index+1,wallStart:null,wallStartMono:null,wallStop:null,runtimeId:null,running:false,paused:false,pauseKind:null,pauseStartedAt:null,pauseStartedMono:null,activeStartedAt:null,activeStartedMono:null,activeMs:0,continuousMs:0,maxContinuousMs:0,tacticalPauseMs:0,adminPauseMs:0,finalDurationMs:null,result:null,voided:false,voidReason:'',segments:[]};
+}
+function normalizeTimerStore(id,value){
+ if(value&&Array.isArray(value.instances)){
+  value.currentIndex=Number.isInteger(value.currentIndex)?value.currentIndex:(value.instances.length?value.instances.length-1:-1);
+  value.instances=value.instances.map((x,i)=>({...blankTimerInstance(id,i),...x,index:Number(x?.index)||i+1,id:x?.id||`${id}-${i+1}`,segments:Array.isArray(x?.segments)?x.segments:[]}));
+  return value;
+ }
+ const store={instances:[],currentIndex:-1};
+ if(value&&typeof value==='object'&&(value.running||value.completed||Number(value.elapsedMs)>0)){
+  const x=blankTimerInstance(id,0),elapsed=Math.max(0,Number(value.elapsedMs)||0);
+  x.wallStart=value.startedAt||now()-elapsed;
+  x.activeMs=elapsed;x.continuousMs=elapsed;x.maxContinuousMs=elapsed;
+  if(value.running){
+   x.running=true;x.runtimeId='legacy-runtime';x.activeStartedAt=x.wallStart;
+  }else{
+   x.wallStop=now();x.finalDurationMs=elapsed;x.result=value.valid===true?'met':value.valid===false?'notmet':null;
+  }
+  store.instances.push(x);store.currentIndex=0;
+ }
+ return store;
+}
+function normalizeStopwatch(sw){
+ const x={elapsedMs:0,running:false,startedAt:null,startedMono:null,runtimeId:null,completed:false,stoppedAt:null,recoveryRequired:false,...(sw||{})};
+ if(x.running&&x.runtimeId!==RUNTIME_ID)x.recoveryRequired=true;
+ return x;
+}
 function normalizeEvaluation(ev,e){
- ev.ratings=ev.ratings||{};ev.failureDetails=ev.failureDetails||{};ev.ntReasons=ev.ntReasons||{};ev.timers=ev.timers||{};ev.stopwatch=ev.stopwatch||{elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null};ev.notes=ev.notes||'';ev.finalizedAt=ev.finalizedAt||null;ev.finalResult=ev.finalResult||null;ev.evaluatorName=ev.evaluatorName||e?.leadEvaluator||'';ev.evaluatorId=ev.evaluatorId||e?.evaluatorId||'';
+ ev.ratings=ev.ratings||{};ev.failureDetails=ev.failureDetails||{};ev.ntReasons=ev.ntReasons||{};ev.timers=ev.timers||{};
+ Object.keys(ev.timers).forEach(id=>{ev.timers[id]=normalizeTimerStore(id,ev.timers[id]);});
+ ev.stopwatch=normalizeStopwatch(ev.stopwatch);
+ ev.notes=ev.notes||'';ev.finalizedAt=ev.finalizedAt||null;ev.finalResult=ev.finalResult||null;ev.evaluatorName=ev.evaluatorName||e?.leadEvaluator||'';ev.evaluatorId=ev.evaluatorId||e?.evaluatorId||'';
 }
 function legacyCmcId(id){
  const m=String(id||'').match(/^CMC-(CUF|TFC|M|A|R|C|H|P|ABX|W|S|CPR|COMMS|DOC|EVAC)-(\d+)$/);if(!m)return id;
@@ -107,7 +141,7 @@ function installation(id){return LOC.installations.find(i=>i.id===id)||null;}
 function installationLabel(i){if(!i)return '';const suffix=i.state?`, ${i.state}`:(i.country&&i.country!=='USA'?`, ${i.country}`:'');return `${i.name}${suffix}`;}
 function eventHomeName(e){return installation(e.homeInstallationId)?.name||e.homeInstallationName||'—';}
 function getEval(){return participant()?.evaluation||null;}
-function showView(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});}
+function showView(id){if(id!=='evalView')releaseEvalWakeLock();document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});}
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200);}
 function openModal(title,html){$('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden');$('modal').setAttribute('aria-hidden','false');}
 function closeModal(){$('modal').classList.add('hidden');$('modal').setAttribute('aria-hidden','true');$('modalBody').innerHTML='';}
@@ -263,8 +297,8 @@ function canManageEventLifecycle(){return ['program_manager','majcom_manager','e
 function canDeleteEvent(){return currentAccessProfile?.role==='enterprise';}
 
 function makeEvaluation(e){
- const s=SKILLS[e.skillId];const timers={};(s.timers||[]).forEach(t=>timers[t.id]={elapsedMs:0,running:false,startedAt:null,completed:false,valid:null});
- return {id:uuid(),startedAt:now(),finalizedAt:null,finalResult:null,ratings:{},failureDetails:{},ntReasons:{},timers,stopwatch:{elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null},evaluatorName:e.leadEvaluator||'',evaluatorId:e.evaluatorId||'',notes:'',appVersion:BUILD.versionName,skillSource:s.source,scenarioVersion:e.scenarioVersion||'1'};
+ const s=SKILLS[e.skillId];const timers={};(s.timers||[]).forEach(t=>timers[t.id]={instances:[],currentIndex:-1});
+ return {id:uuid(),startedAt:now(),finalizedAt:null,finalResult:null,ratings:{},failureDetails:{},ntReasons:{},timers,stopwatch:normalizeStopwatch(null),evaluatorName:e.leadEvaluator||'',evaluatorId:e.evaluatorId||'',notes:'',appVersion:BUILD.versionName,skillSource:s.source,scenarioVersion:e.scenarioVersion||'1'};
 }
 function scoring(ev=getEval(),s=skill()){
  if(!ev||!s)return {pass:0,fail:0,nt:0,no:0,ungraded:0,denom:0,percent:null,criticalFail:0,missingClass:0,unresolved:0,result:'IN PROGRESS'};
@@ -276,7 +310,13 @@ function scoring(ev=getEval(),s=skill()){
  return {pass,fail,nt,no,ungraded,denom,percent,criticalFail,missingClass,unresolved,result,stopwatchInvalid};
 }
 function finalizable(ev=getEval(),s=skill()){
- const score=scoring(ev,s);const running=!!ev?.stopwatch?.running||Object.values(ev?.timers||{}).some(t=>t.running);const stopwatchReady=!s?.stopwatch?.requiredForFinalization||!!ev?.stopwatch?.completed;return {ok:score.unresolved===0&&!running&&stopwatchReady,score,running,stopwatchReady};
+ const score=scoring(ev,s);
+ const activeTimerDefs=(s?.timers||[]).filter(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.voided&&!x.wallStop&&(x.running||x.paused||timerNeedsRecovery(x)));});
+ const timerPassMissing=(s?.timers||[]).filter(d=>d.linkedItemId&&ev?.ratings?.[d.linkedItemId]==='pass'&&timerAggregateStatus(d,ev)!=='met');
+ const stopwatchRecovery=!!ev?.stopwatch?.recoveryRequired;
+ const running=!!ev?.stopwatch?.running||activeTimerDefs.length>0;
+ const stopwatchReady=!s?.stopwatch?.requiredForFinalization||!!ev?.stopwatch?.completed;
+ return {ok:score.unresolved===0&&!running&&!stopwatchRecovery&&stopwatchReady&&timerPassMissing.length===0,score,running,stopwatchReady,stopwatchRecovery,activeTimerDefs,timerPassMissing};
 }
 
 function renderHome(){
@@ -458,22 +498,156 @@ function openEvaluation(pid){
  currentSection=0;
  renderEvaluation();
 }
-function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
+function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();requestEvalWakeLock();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
 function renderEvalKpis(){const st=scoring();$('scoreKpi').textContent=st.percent==null?'—':`${(st.percent*100).toFixed(1)}%`;$('critKpi').textContent=st.criticalFail;$('unresolvedKpi').textContent=st.unresolved;}
-function currentStopwatchElapsed(sw){return sw?.running?(sw.elapsedMs||0)+(now()-sw.startedAt):(sw?.elapsedMs||0);}
+function stopwatchElapsed(sw,at=now(),monoAt=monoNow()){
+ if(!sw)return 0;
+ if(!sw.running||sw.recoveryRequired)return Math.max(0,Number(sw.elapsedMs)||0);
+ if(sw.runtimeId===RUNTIME_ID&&Number.isFinite(sw.startedMono)&&Number.isFinite(monoAt))return Math.max(0,(Number(sw.elapsedMs)||0)+(monoAt-sw.startedMono));
+ return Math.max(0,(Number(sw.elapsedMs)||0)+(at-(sw.startedAt||at)));
+}
 function renderStopwatch(tickOnly=false){
- const s=skill(),ev=getEval();if(!s||!ev)return;const def=s.stopwatch||{label:'Assessment Stopwatch'},sw=ev.stopwatch||(ev.stopwatch={elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null});const ms=currentStopwatchElapsed(sw);const valid=sw.completed?timerValidity(def,ms):null;
- const standard=def.standard||'';const state=sw.running?'RUNNING':sw.completed?'RECORDED':'READY';
- $('assessmentStopwatch').innerHTML=`<div class="stopwatchCard ${valid===false?'fail':valid===true&&def.requiredForPass?'ok':''}"><div><small>ASSESSMENT STOPWATCH</small><h3>${esc(def.label||'Assessment Stopwatch')}</h3><span class="tiny">${esc(standard)}${standard?' · ':''}${esc(state)}</span></div><div class="stopwatchValue">${fmtMs(ms)}</div><div class="stopwatchActions">${!ev.finalizedAt?`${sw.running?`<button class="btn danger" id="stopwatchToggle">${esc(def.stopLabel||'STOP')}</button>`:sw.completed?'':`<button class="btn primary" id="stopwatchToggle">${esc(def.startLabel||'START')}</button>`}<button class="btn ghost" id="stopwatchReset">Reset</button>`:''}</div></div>`;
+ const s=skill(),ev=getEval();if(!s||!ev)return;
+ const def=s.stopwatch||{label:'Assessment Stopwatch'},sw=ev.stopwatch=normalizeStopwatch(ev.stopwatch),ms=stopwatchElapsed(sw),valid=sw.completed?timerValidity(def,ms):null;
+ const standard=def.standard||'',state=sw.recoveryRequired?'RECOVERY REQUIRED — RESET AND RESTART':sw.running?'RUNNING':sw.completed?'RECORDED':'READY';
+ $('assessmentStopwatch').innerHTML=`<div class="stopwatchCard ${sw.recoveryRequired?'fail':valid===false?'fail':valid===true&&def.requiredForPass?'ok':''}"><div><small>ASSESSMENT STOPWATCH</small><h3>${esc(def.label||'Assessment Stopwatch')}</h3><span class="tiny">${esc(standard)}${standard?' · ':''}${esc(state)}</span></div><div class="stopwatchValue">${sw.recoveryRequired?'--:--':fmtMs(ms)}</div><div class="stopwatchActions">${!ev.finalizedAt?`${!sw.recoveryRequired&&(sw.running||!sw.completed)?`<button class="btn ${sw.running?'danger':'primary'}" id="stopwatchToggle">${esc(sw.running?(def.stopLabel||'STOP'):(def.startLabel||'START'))}</button>`:''}<button class="btn ghost" id="stopwatchReset">${sw.recoveryRequired?'RESET / RESTART':'Reset'}</button>`:''}</div></div>`;
  const tog=$('stopwatchToggle');if(tog)tog.onclick=toggleStopwatch;const rst=$('stopwatchReset');if(rst)rst.onclick=resetStopwatch;
 }
-function toggleStopwatch(){const ev=getEval();if(!ev||ev.finalizedAt)return;const sw=ev.stopwatch||(ev.stopwatch={elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null});if(!sw.running&&!sw.completed){sw.running=true;sw.startedAt=now();}else if(sw.running){sw.elapsedMs+=(now()-sw.startedAt);sw.running=false;sw.startedAt=null;sw.completed=true;sw.stoppedAt=now();}saveDb();renderStopwatch();}
-function resetStopwatch(){const ev=getEval();if(!ev||ev.finalizedAt)return;if(!confirm('Reset the assessment stopwatch? This removes the recorded assessment duration for this in-progress evaluation.'))return;ev.stopwatch={elapsedMs:0,running:false,startedAt:null,completed:false,stoppedAt:null};saveDb();renderStopwatch();}
-function currentTimerElapsed(t){return t.running?t.elapsedMs+(now()-t.startedAt):t.elapsedMs;}
+function toggleStopwatch(){
+ const ev=getEval();if(!ev||ev.finalizedAt)return;const sw=ev.stopwatch=normalizeStopwatch(ev.stopwatch),at=now(),monoAt=monoNow();
+ if(sw.recoveryRequired){alert('This assessment clock was active when FieldReady reloaded. Timing integrity cannot be reconstructed. Reset the clock and restart the formal assessment timing.');return;}
+ if(!sw.running&&!sw.completed){sw.running=true;sw.startedAt=at;sw.startedMono=monoAt;sw.runtimeId=RUNTIME_ID;}
+ else if(sw.running){sw.elapsedMs=stopwatchElapsed(sw,at,monoAt);sw.running=false;sw.startedAt=null;sw.startedMono=null;sw.completed=true;sw.stoppedAt=at;}
+ saveDb();renderStopwatch();renderEvalKpis();
+}
+function resetStopwatch(){
+ const ev=getEval();if(!ev||ev.finalizedAt)return;
+ const sw=normalizeStopwatch(ev.stopwatch);
+ const msg=sw.recoveryRequired?'Reset the interrupted assessment clock? The recovered timing value will be discarded and the assessment clock must be restarted.':'Reset the assessment stopwatch? This removes the recorded assessment duration for this in-progress evaluation.';
+ if(!confirm(msg))return;ev.stopwatch=normalizeStopwatch(null);saveDb();renderStopwatch();renderEvalKpis();
+}
 function timerValidity(def,ms){if(def.minMs!=null&&ms<def.minMs)return false;if(def.maxMs!=null&&ms>def.maxMs)return false;return true;}
-function renderTimers(tickOnly=false){const s=skill(),ev=getEval();if(!s||!ev)return;const defs=s.timers||[];$('timerStrip').innerHTML=defs.length?defs.map(def=>{const t=ev.timers[def.id]||(ev.timers[def.id]={elapsedMs:0,running:false,startedAt:null,completed:false,valid:null}),ms=currentTimerElapsed(t),valid=t.completed?timerValidity(def,ms):null;const standard=def.standard||(def.minMs!=null&&def.maxMs!=null?`${def.minMs/1000}–${def.maxMs/1000}s`:def.maxMs!=null?`≤ ${def.maxMs/1000}s`:def.minMs!=null?`≥ ${def.minMs/1000}s`:'');return `<div class="timerCard ${valid===true?'ok':valid===false?'fail':''}"><header><b>${esc(def.label)}</b><span class="tiny">${esc(standard)}</span></header><div class="timerValue">${fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt?`<button class="btn ${t.running?'danger':'primary'}" data-timer-toggle="${def.id}">${esc(t.running?(def.stopLabel||'STOP'):(def.startLabel||'START'))}</button><button class="btn ghost" data-timer-reset="${def.id}">Reset</button>`:''}</div><div class="tiny">${esc(def.description||'')}</div></div>`;}).join(''):'';document.querySelectorAll('[data-timer-toggle]').forEach(b=>b.onclick=()=>toggleTimer(b.dataset.timerToggle));document.querySelectorAll('[data-timer-reset]').forEach(b=>b.onclick=()=>resetTimer(b.dataset.timerReset));}
-function toggleTimer(id){const ev=getEval(),def=skill().timers.find(t=>t.id===id),t=ev.timers[id];if(ev.finalizedAt)return;if(!t.running){t.running=true;t.startedAt=now();t.completed=false;t.valid=null;}else{t.elapsedMs+=now()-t.startedAt;t.running=false;t.startedAt=null;t.completed=true;t.valid=timerValidity(def,t.elapsedMs);if(def.autoFail&&def.linkedItemId&&!t.valid){saveDb();renderTimers();return beginFailureClassification(def.linkedItemId,{forcedMode:'timing-sequence',timerId:id});}}saveDb();renderTimers();renderEvalKpis();}
-function resetTimer(id){const ev=getEval();if(ev.finalizedAt)return;if(!confirm('Reset this timer? This is an evaluator action and should only be used before finalization.'))return;ev.timers[id]={elapsedMs:0,running:false,startedAt:null,completed:false,valid:null};saveDb();renderTimers();}
+function timerStore(id,ev=getEval()){
+ if(!ev)return {instances:[],currentIndex:-1};
+ ev.timers=ev.timers||{};
+ ev.timers[id]=normalizeTimerStore(id,ev.timers[id]);
+ return ev.timers[id];
+}
+function currentTimerInstance(id,ev=getEval()){const s=timerStore(id,ev);return s.currentIndex>=0?s.instances[s.currentIndex]:null;}
+function ensureTimerInstance(id,ev=getEval()){const s=timerStore(id,ev);let x=currentTimerInstance(id,ev);if(!x||x.wallStop||x.voided){x=blankTimerInstance(id,s.instances.length);s.instances.push(x);s.currentIndex=s.instances.length-1;}return x;}
+function timerNeedsRecovery(x){return !!(x?.wallStart&&!x.wallStop&&!x.voided&&(!x.runtimeId||x.runtimeId!==RUNTIME_ID));}
+function elapsedSafe(wallStart,monoStart,runtimeId,at=now(),monoAt=monoNow()){
+ if(runtimeId===RUNTIME_ID&&Number.isFinite(monoStart)&&Number.isFinite(monoAt))return Math.max(0,monoAt-monoStart);
+ return Math.max(0,at-(wallStart||at));
+}
+function closeTimerActive(x,at,monoAt=monoNow()){
+ if(x?.activeStartedAt){
+  const d=elapsedSafe(x.activeStartedAt,x.activeStartedMono,x.runtimeId,at,monoAt);
+  x.activeMs=(x.activeMs||0)+d;x.continuousMs=(x.continuousMs||0)+d;
+  x.segments=Array.isArray(x.segments)?x.segments:[];x.segments.push({start:x.activeStartedAt,end:at,duration:d});
+  x.activeStartedAt=null;x.activeStartedMono=null;
+ }
+}
+function timerDuration(def,x,at=now(),monoAt=monoNow()){
+ if(!x||!x.wallStart)return 0;
+ if(x.wallStop&&Number.isFinite(Number(x.finalDurationMs)))return Number(x.finalDurationMs);
+ let active=Number(x.activeMs)||0,continuous=Number(x.continuousMs)||0,maxContinuous=Number(x.maxContinuousMs)||0,admin=Number(x.adminPauseMs)||0;
+ if(x.running&&x.activeStartedAt&&!timerNeedsRecovery(x)){const d=elapsedSafe(x.activeStartedAt,x.activeStartedMono,x.runtimeId,at,monoAt);active+=d;continuous+=d;}
+ if(x.paused&&x.pauseKind==='admin'&&x.pauseStartedAt&&!timerNeedsRecovery(x))admin+=elapsedSafe(x.pauseStartedAt,x.pauseStartedMono,x.runtimeId,at,monoAt);
+ maxContinuous=Math.max(maxContinuous,continuous);
+ if(def.gradingClock==='wall')return Math.max(0,elapsedSafe(x.wallStart,x.wallStartMono,x.runtimeId,at,monoAt)-admin);
+ if(def.gradingClock==='continuous')return maxContinuous;
+ return active;
+}
+function rawTimerResult(def,x,at=now()){
+ if(!x||!x.wallStart||x.voided)return 'incomplete';
+ const dur=timerDuration(def,x,at),valid=timerValidity(def,dur);
+ if(!x.wallStop){
+  if(def.maxMs!=null&&dur>def.maxMs)return 'notmet';
+  return valid?'live-met':'incomplete';
+ }
+ return valid?'met':'notmet';
+}
+function timerAggregateStatus(def,ev=getEval()){
+ const valid=timerStore(def.id,ev).instances.filter(x=>x.wallStart&&!x.voided);
+ if(!valid.length)return 'incomplete';
+ const statuses=valid.map(x=>rawTimerResult(def,x));
+ if(statuses.includes('notmet'))return 'notmet';
+ if(valid.some(x=>!x.wallStop))return statuses.includes('live-met')?'live-met':'incomplete';
+ return statuses.every(x=>x==='met')?'met':'incomplete';
+}
+function timerAction(id,act){
+ const ev=getEval(),def=(skill()?.timers||[]).find(t=>t.id===id);if(!ev||!def||ev.finalizedAt)return;
+ let x=currentTimerInstance(id,ev),at=now(),monoAt=monoNow();
+ if(x&&timerNeedsRecovery(x)&&act!=='void'){alert('This timer was active when FieldReady reloaded. For timing integrity it cannot be resumed or stopped. VOID this instance with a reason, then start a new timer instance.');return;}
+ if(act==='start'){
+  x=ensureTimerInstance(id,ev);
+  if(x.paused){
+   const pd=elapsedSafe(x.pauseStartedAt,x.pauseStartedMono,x.runtimeId,at,monoAt);
+   if(x.pauseKind==='admin')x.adminPauseMs=(x.adminPauseMs||0)+pd;else x.tacticalPauseMs=(x.tacticalPauseMs||0)+pd;
+   x.pauseStartedAt=null;x.pauseStartedMono=null;x.pauseKind=null;x.paused=false;x.running=true;x.activeStartedAt=at;x.activeStartedMono=monoAt;
+  }else if(!x.running&&!x.wallStart){
+   x.wallStart=at;x.wallStartMono=monoAt;x.runtimeId=RUNTIME_ID;x.running=true;x.activeStartedAt=at;x.activeStartedMono=monoAt;
+   if(def.linkedItemId&&ev.ratings[def.linkedItemId]==='nt'){delete ev.ratings[def.linkedItemId];delete ev.ntReasons?.[def.linkedItemId];}
+  }
+ }else if(act==='pause'||act==='admin'){
+  if(!x?.running)return;closeTimerActive(x,at,monoAt);x.running=false;x.paused=true;x.pauseKind=act==='admin'?'admin':'tactical';x.pauseStartedAt=at;x.pauseStartedMono=monoAt;
+  if(act==='pause'&&def.continuousRequired){x.maxContinuousMs=Math.max(Number(x.maxContinuousMs)||0,Number(x.continuousMs)||0);x.continuousMs=0;}
+ }else if(act==='stop'){
+  if(!x?.wallStart)return;if(x.running)closeTimerActive(x,at,monoAt);
+  if(x.paused&&x.pauseStartedAt){const pd=elapsedSafe(x.pauseStartedAt,x.pauseStartedMono,x.runtimeId,at,monoAt);if(x.pauseKind==='admin')x.adminPauseMs=(x.adminPauseMs||0)+pd;else x.tacticalPauseMs=(x.tacticalPauseMs||0)+pd;}
+  x.pauseStartedAt=null;x.pauseStartedMono=null;x.pauseKind=null;x.running=false;x.paused=false;x.maxContinuousMs=Math.max(Number(x.maxContinuousMs)||0,Number(x.continuousMs)||0);x.finalDurationMs=timerDuration(def,x,at,monoAt);x.wallStop=at;x.result=rawTimerResult(def,x,at);
+  if(def.autoFail&&def.linkedItemId&&x.result==='notmet'){
+   saveDb();renderTimers();renderEvalKpis();return beginFailureClassification(def.linkedItemId,{forcedMode:'timing-sequence',timerId:id});
+  }
+ }else if(act==='reset'){
+  if(def.resetPolicy==='protected'&&!confirm('Reset this protected timer? Use this only if the timing attempt was invalid before finalization.'))return;
+  if(x&&x.wallStart&&!x.wallStop&&!x.voided&&!confirm('Preserve the current incomplete timer instance and create a new instance?'))return;
+  const s=timerStore(id,ev),n=blankTimerInstance(id,s.instances.length);s.instances.push(n);s.currentIndex=s.instances.length-1;
+ }else if(act==='void'){
+  if(!x?.wallStart)return;const reason=prompt('Reason for voiding this timer instance (required):');if(!reason?.trim())return;
+  if(x.running&&!timerNeedsRecovery(x))closeTimerActive(x,at,monoAt);x.running=false;x.paused=false;x.wallStop=x.wallStop||at;x.voided=true;x.voidReason=reason.trim();
+ }
+ saveDb();renderTimers();renderEvalKpis();
+}
+function renderTimers(tickOnly=false){
+ const s=skill(),ev=getEval();if(!s||!ev)return;const defs=s.timers||[];
+ $('timerStrip').innerHTML=defs.length?defs.map(def=>{
+  const store=timerStore(def.id,ev),x=currentTimerInstance(def.id,ev),recovery=timerNeedsRecovery(x),status=recovery?'recovery':timerAggregateStatus(def,ev),ms=x&&!recovery?timerDuration(def,x):0;
+  const live=recovery?'RECOVERY REQUIRED — VOID AND RESTART':status==='met'?'STANDARD MET':status==='notmet'?'STANDARD NOT MET':status==='live-met'?'STANDARD CURRENTLY MET':'READY / INCOMPLETE';
+  const startLabel=x?.paused?'RESUME':x?.running?'RUNNING':(def.startLabel||'START');
+  const pauseBtn=def.pausePolicy==='admin-only'
+   ?`<button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`
+   :`<button class="btn ghost timerControl" data-timer-act="pause" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>PAUSE</button><button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`;
+  const history=store.instances.filter(z=>z.wallStart).map(z=>`<div class="timerHistoryRow"><span>#${z.index}${z.voided?' VOID':''}</span><span>${z.voided?esc(z.voidReason):`${fmtMs(timerDuration(def,z,z.wallStop||now()))} · ${rawTimerResult(def,z,z.wallStop||now()).toUpperCase()}`}</span></div>`).join('');
+  return `<div class="timerCard ${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}"><header><b>${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt?`<button class="btn primary timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn danger timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b>${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
+ }).join(''):'';
+ document.querySelectorAll('[data-timer-act]').forEach(b=>b.onclick=()=>timerAction(b.dataset.timerId,b.dataset.timerAct));
+ renderActiveTimers();
+}
+function renderActiveTimers(){
+ const ev=getEval(),s=skill();if(!ev||!s||!$('activeTimersCard'))return;
+ const active=(s.timers||[]).filter(d=>{const x=currentTimerInstance(d.id,ev);return x&&(x.running||x.paused||timerNeedsRecovery(x));});
+ $('activeTimersCard').classList.toggle('hidden',active.length===0);$('activeTimerCount').textContent=String(active.length);
+ $('activeTimers').innerHTML=active.map(d=>{const x=currentTimerInstance(d.id,ev),recovery=timerNeedsRecovery(x);return `<div class="activeTimerRow"><span><b>${esc(d.label)}</b> #${x.index}${recovery?' · RECOVERY REQUIRED':x.paused?` · ${x.pauseKind==='admin'?'ADMIN HOLD':'PAUSED'}`:''}</span><strong>${recovery?'VOID / RESTART':fmtMs(timerDuration(d,x))}</strong></div>`;}).join('');
+}
+function evaluationTimingUnresolved(){
+ const ev=getEval(),s=skill();if(!ev||!s)return false;
+ if(ev.stopwatch?.running||ev.stopwatch?.recoveryRequired)return true;
+ return (s.timers||[]).some(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.wallStop&&!x.voided&&(x.running||x.paused||timerNeedsRecovery(x)));});
+}
+async function requestEvalWakeLock(){
+ if(!$('evalView')?.classList.contains('active')||getEval()?.finalizedAt||!('wakeLock' in navigator))return;
+ try{if(!evalWakeLock||evalWakeLock.released)evalWakeLock=await navigator.wakeLock.request('screen');}catch{}
+}
+async function releaseEvalWakeLock(){
+ try{if(evalWakeLock&&!evalWakeLock.released)await evalWakeLock.release();}catch{}
+ evalWakeLock=null;
+}
+function safeBackFromEvaluation(){
+ if(evaluationTimingUnresolved()){alert('Assessment timing is still active, paused, or requires recovery. Stop, void, or reset the affected timing record before leaving this evaluation.');return;}
+ renderEvent();
+}
 function renderCriteria(){const s=skill(),ev=getEval(),sec=s.sections[currentSection];const locked=!!ev.finalizedAt;$('criteriaList').innerHTML=sec.items.map(i=>{const r=ev.ratings[i.id]||'',d=ev.failureDetails[i.id];return `<div class="criterion ${i.critical?'critical ':''}${r}" id="crit-${i.id}"><div><div class="criterionCode">${esc(i.id)}${i.critical?'<span class="critBadge">CRITICAL</span>':''}</div><p>${esc(i.text)}</p></div><div class="ratingBtns">${['pass','fail','nt','no'].map(v=>{const lab=v==='pass'?'PASS':v==='fail'?'FAIL':v==='nt'?'NT':'N/O';const disabled=locked||(v==='nt'&&i.critical);return `<button class="ratingBtn ${v} ${r===v?'active':''}" data-rate="${v}" data-item="${i.id}" ${disabled?'disabled':''}>${lab}</button>`;}).join('')}</div>${r==='fail'&&d?`<div class="failureDetail"><b>${esc(d.modeLabel)}</b> → ${esc(d.contributorLabel)}${d.comment?` · ${esc(d.comment)}`:''}</div>`:''}</div>`;}).join('');document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>setRating(b.dataset.item,b.dataset.rate));$('prevSectionBtn').disabled=currentSection===0;$('nextSectionBtn').disabled=currentSection===s.sections.length-1;}
 function setRating(id,rating){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||!i)return;if(rating==='fail')return beginFailureClassification(id);if(rating==='nt'&&i.critical){alert('Critical criteria cannot be marked NT.');return;}if(rating==='nt')return requestNt(id);ev.ratings[id]=rating;if(rating!=='fail')delete ev.failureDetails[id];saveDb();renderCriteria();renderEvalKpis();}
 function requestNt(id){openModal('Not Tested — scenario did not elicit criterion',`<p>NT may be used only for a <b>noncritical criterion</b> that the approved scenario did not elicit. It may not excuse an observed error or omission.</p><form id="ntForm"><div class="formGrid"><label class="full"><span>Objective scenario note (optional)</span><textarea name="detail" rows="3" placeholder="Briefly document why the approved scenario did not elicit this criterion"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Apply NT</button></div></form>`);$('ntForm').onsubmit=e=>{e.preventDefault();const ev=getEval();ev.ratings[id]='nt';ev.ntReasons[id]={code:'scenario-not-elicited',label:'Approved scenario did not elicit criterion',detail:new FormData(e.target).get('detail')||'',at:now()};delete ev.failureDetails[id];saveDb();closeModal();renderCriteria();renderEvalKpis();};}
@@ -487,19 +661,40 @@ function chooseContributor(id,mode){
 }
 function failureCommentStep(id,mode,contributor){const m=FAILURE_MODES.find(x=>x.id===mode),c=CONTRIBUTORS.find(x=>x.id===contributor),required=mode==='other-unclear';openModal(`Record FAIL — ${id}`,`<div class="reviewBox"><b>${esc(m.label)}</b><br>${esc(c.label)}</div><form id="failureSaveForm"><div class="formGrid"><label class="full"><span>Objective evaluator comment ${required?'*':'(optional)'}</span><textarea name="comment" rows="3" ${required?'required':''} placeholder="Document concise observable facts; avoid speculative labels"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Record FAIL</button></div></form>`);$('failureSaveForm').onsubmit=e=>{e.preventDefault();const comment=String(new FormData(e.target).get('comment')||'').trim();if(required&&!comment){alert('Other / unclear requires a brief objective comment.');return;}const ev=getEval();ev.ratings[id]='fail';ev.failureDetails[id]={mode,modeLabel:m.label,contributor,contributorLabel:c.label,comment,at:now()};saveDb();closeModal();renderCriteria();renderEvalKpis();};}
 function nextUnresolved(){const ev=getEval(),s=skill();const items=allItems(s);const start=items.findIndex(i=>s.sections[currentSection].items.some(x=>x.id===i.id));const ordered=items.slice(start).concat(items.slice(0,start));const hit=ordered.find(i=>{const r=ev.ratings[i.id],d=ev.failureDetails[i.id];return !r||r==='no'||(i.critical&&r==='nt')||(r==='fail'&&(!d?.mode||!d?.contributor||(d.mode==='other-unclear'&&!d.comment)));});if(!hit){toast('No unresolved criteria.');return;}currentSection=s.sections.findIndex(sec=>sec.items.some(i=>i.id===hit.id));renderCriteria();$('sectionSelect').value=String(currentSection);setTimeout(()=>document.getElementById(`crit-${hit.id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),0);}
-function reviewFinalize(){const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;if(!fin.ok){const issues=[];if(st.unresolved)issues.push(`${st.unresolved} criterion/classification issue(s)`);if(fin.running)issues.push('stop all running clocks');if(!fin.stopwatchReady)issues.push('start and stop the assessment stopwatch');alert(`Cannot finalize. ${issues.join('; ')}.`);return;}const predicted=(st.criticalFail===0&&st.percent>=s.threshold&&!st.stopwatchInvalid)?'PASS':'FAIL';const swMs=ev.stopwatch?.elapsedMs||0;openModal('Evaluation Review',`<div class="reviewBox"><h3>${predicted}</h3><p>Score: <b>${st.pass}/${st.denom} (${pct(st.percent)})</b> · NT excluded</p><p>Critical failures: <b>${st.criticalFail}</b></p><p>Assessment duration: <b>${fmtMs(swMs)}</b>${st.stopwatchInvalid?' · <b>time standard not met</b>':''}</p><p>PASS requires ≥ ${Math.round(s.threshold*100)}%, no failed critical criteria${s.stopwatch?.requiredForPass?', and the overall time standard':''}.</p></div><p>Finalization locks this formal measurement. Educational remediation should occur only after the measurement record is complete.</p><button id="finalizeConfirm" class="btn primary">Finalize ${predicted}</button>`);$('finalizeConfirm').onclick=async()=>{
- ev.evaluatorName=$('evalName').value.trim();
- ev.evaluatorId=$('evalId').value.trim();
- ev.notes=$('overallNotes').value.trim();
- ev.finalizedAt=now();
- ev.finalResult=predicted;
- saveDb();
- gradingSyncLocked=false;
- closeModal();
- renderEvaluation();
- toast(`Evaluation finalized: ${predicted}`);
- try{await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
-};}
+function reviewFinalize(){
+ const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;
+ if(!fin.ok){
+  const issues=[];
+  if(st.unresolved)issues.push(`${st.unresolved} criterion/classification issue(s)`);
+  if(fin.activeTimerDefs?.length)issues.push(`${fin.activeTimerDefs.length} active/paused/recovered clinical timer(s)`);
+  if(fin.timerPassMissing?.length)issues.push(`${fin.timerPassMissing.length} timer-linked PASS criterion/criteria without a met timing standard`);
+  if(fin.stopwatchRecovery)issues.push('assessment stopwatch requires recovery');
+  if(!fin.stopwatchReady)issues.push('start and stop the assessment stopwatch');
+  if(fin.running&&!fin.activeTimerDefs?.length&&!fin.stopwatchRecovery)issues.push('stop all running clocks');
+  alert(`Cannot finalize. ${issues.join('; ')}.`);
+  return;
+ }
+ const predicted=(st.criticalFail===0&&st.percent>=s.threshold&&!st.stopwatchInvalid)?'PASS':'FAIL';
+ const swMs=stopwatchElapsed(ev.stopwatch);
+ const timerLines=(s.timers||[]).map(d=>{const status=timerAggregateStatus(d,ev),store=timerStore(d.id,ev),used=store.instances.filter(x=>x.wallStart&&!x.voided);return `<div class="recordMetric"><span>${esc(d.label)}</span><b>${esc(used.length?status.toUpperCase():'NOT TRIGGERED')}</b></div>`;}).join('');
+ const failed=allItems(s).filter(i=>ev.ratings[i.id]==='fail');
+ const failLines=failed.length?failed.slice(0,8).map(i=>`<li><b>${esc(i.id)}${i.critical?' · CRITICAL':''}</b> — ${esc(i.text)}</li>`).join(''):'<li>None</li>';
+ openModal('Evaluation Review',`<div class="reviewBox"><h3>${predicted}</h3><p>Score: <b>${st.pass}/${st.denom} (${pct(st.percent)})</b> · NT excluded</p><p>Critical failures: <b>${st.criticalFail}</b></p><p>Assessment duration: <b>${fmtMs(swMs)}</b>${st.stopwatchInvalid?' · <b>time standard not met</b>':''}</p><p>PASS requires ≥ ${Math.round(s.threshold*100)}%, no failed critical criteria${s.stopwatch?.requiredForPass?', and the overall time standard':''}.</p></div><h3>Timing review</h3>${timerLines||'<p class="tiny">No skill-specific timers.</p>'}<h3>Failed criteria</h3><ul>${failLines}</ul><p>Finalization locks this formal measurement. Educational remediation should occur only after the measurement record is complete.</p><button id="finalizeConfirm" class="btn primary">Finalize ${predicted}</button>`);
+ $('finalizeConfirm').onclick=async()=>{
+  ev.evaluatorName=$('evalName').value.trim();
+  ev.evaluatorId=$('evalId').value.trim();
+  ev.notes=$('overallNotes').value.trim();
+  ev.finalizedAt=now();
+  ev.finalResult=predicted;
+  saveDb();
+  gradingSyncLocked=false;
+  closeModal();
+  renderEvaluation();
+  releaseEvalWakeLock();
+  toast(`Evaluation finalized: ${predicted}`);
+  try{await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
+ };
+}
 function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
 
 function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',BUILD.versionName]);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
@@ -659,7 +854,7 @@ async function restoreAuthorizedSession(){
 handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
 $('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('closeEventBtn').onclick=closeEvent;$('deleteEventBtn').onclick=deleteEvent;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
-$('backRosterBtn').onclick=renderEvent;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
+$('backRosterBtn').onclick=safeBackFromEvaluation;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
 
 $('syncStatusBtn').onclick=openSyncPanel;
 window.addEventListener('fieldready:remote-db',e=>{
@@ -693,6 +888,14 @@ SYNC?.init?.({
  getDb:()=>db,
  shouldDeferAutoSync:()=>gradingSyncLocked
 });
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden&&$('evalView')?.classList.contains('active')&&evaluationTimingUnresolved())evalBackgroundedAt=now();
+ if(!document.hidden&&$('evalView')?.classList.contains('active')){
+  requestEvalWakeLock();
+  if(evalBackgroundedAt){toast('Assessment resumed after app/background interruption. Verify all active timing states.');evalBackgroundedAt=null;}
+ }
+});
+window.addEventListener('beforeunload',e=>{if(evaluationTimingUnresolved()){e.preventDefault();e.returnValue='';}});
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 renderHome();
 })();
