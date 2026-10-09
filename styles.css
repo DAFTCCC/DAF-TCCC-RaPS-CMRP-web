@@ -31,3 +31,12 @@
 .activeTimerRow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:1px solid #ead7a7;background:#fff;padding:10px 12px;border-radius:10px}
 .activeTimerRow strong{font-size:1.05rem;font-variant-numeric:tabular-nums}
 @media(max-width:620px){.activeTimerRow{grid-template-columns:1fr}.timerBtns .btn{min-height:50px}.timerHistoryRow{align-items:flex-start;flex-direction:column;gap:2px}}
+
+
+/* FieldReady linked-timer criterion integration */
+.criterionTimers{grid-column:1/-1;margin-top:8px}
+.inlineTimerCard{margin:0;border-left:4px solid #5c8fb2;background:#f7fbfe}
+.timerLinkedBadge{display:inline-flex;margin-left:7px;padding:2px 6px;border-radius:999px;background:#e8f3fb;border:1px solid #b8d7ea;color:#235879;font-size:.62rem;font-weight:900;letter-spacing:.05em;vertical-align:middle}
+.inlineTimerCard header{align-items:center}
+.inlineTimerCard .timerValue{font-size:1.9rem}
+@media(max-width:620px){.criterionTimers{margin-top:10px}.inlineTimerCard .timerValue{font-size:1.7rem}}
