@@ -598,7 +598,7 @@ function timerAction(id,act){
   if(x.paused&&x.pauseStartedAt){const pd=elapsedSafe(x.pauseStartedAt,x.pauseStartedMono,x.runtimeId,at,monoAt);if(x.pauseKind==='admin')x.adminPauseMs=(x.adminPauseMs||0)+pd;else x.tacticalPauseMs=(x.tacticalPauseMs||0)+pd;}
   x.pauseStartedAt=null;x.pauseStartedMono=null;x.pauseKind=null;x.running=false;x.paused=false;x.maxContinuousMs=Math.max(Number(x.maxContinuousMs)||0,Number(x.continuousMs)||0);x.finalDurationMs=timerDuration(def,x,at,monoAt);x.wallStop=at;x.result=rawTimerResult(def,x,at);
   if(def.autoFail&&def.linkedItemId&&x.result==='notmet'){
-   saveDb();renderTimers();renderEvalKpis();return beginFailureClassification(def.linkedItemId,{forcedMode:'timing-sequence',timerId:id});
+   saveDb();renderTimers();renderCriteria();renderEvalKpis();return beginFailureClassification(def.linkedItemId,{forcedMode:'timing-sequence',timerId:id});
   }
  }else if(act==='reset'){
   if(def.resetPolicy==='protected'&&!confirm('Reset this protected timer? Use this only if the timing attempt was invalid before finalization.'))return;
@@ -608,21 +608,44 @@ function timerAction(id,act){
   if(!x?.wallStart)return;const reason=prompt('Reason for voiding this timer instance (required):');if(!reason?.trim())return;
   if(x.running&&!timerNeedsRecovery(x))closeTimerActive(x,at,monoAt);x.running=false;x.paused=false;x.wallStop=x.wallStop||at;x.voided=true;x.voidReason=reason.trim();
  }
- saveDb();renderTimers();renderEvalKpis();
+ saveDb();renderTimers();renderCriteria();renderEvalKpis();
+}
+function timerLiveLabel(status,recovery=false){
+ return recovery?'RECOVERY REQUIRED — VOID AND RESTART':status==='met'?'STANDARD MET':status==='notmet'?'STANDARD NOT MET':status==='live-met'?'STANDARD CURRENTLY MET':'READY / INCOMPLETE';
+}
+function timerCardMarkup(def,ev=getEval(),inline=false){
+ const store=timerStore(def.id,ev),x=currentTimerInstance(def.id,ev),recovery=timerNeedsRecovery(x),status=recovery?'recovery':timerAggregateStatus(def,ev),ms=x&&!recovery?timerDuration(def,x):0;
+ const live=timerLiveLabel(status,recovery),startLabel=x?.paused?'RESUME':x?.running?'RUNNING':(def.startLabel||'START');
+ const pauseBtn=def.pausePolicy==='admin-only'
+  ?`<button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`
+  :`<button class="btn ghost timerControl" data-timer-act="pause" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>PAUSE</button><button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`;
+ const history=store.instances.filter(z=>z.wallStart).map(z=>`<div class="timerHistoryRow"><span>#${z.index}${z.voided?' VOID':''}</span><span>${z.voided?esc(z.voidReason):`${fmtMs(timerDuration(def,z,z.wallStop||now()))} · ${rawTimerResult(def,z,z.wallStop||now()).toUpperCase()}`}</span></div>`).join('');
+ return `<div class="timerCard ${inline?'inlineTimerCard ':''}${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}" data-inline-timer-card="${def.id}"><header><b>${inline?'TIMED CRITERION · ':''}${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue" data-inline-timer-display="${def.id}">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt?`<button class="btn primary timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn danger timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b data-inline-timer-status="${def.id}">${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
+}
+function bindTimerControls(root=document){
+ root.querySelectorAll('[data-timer-act]').forEach(b=>b.onclick=()=>timerAction(b.dataset.timerId,b.dataset.timerAct));
+}
+function updateInlineTimerDisplays(){
+ const s=skill(),ev=getEval();if(!s||!ev)return;
+ (s.timers||[]).filter(d=>d.linkedItemId).forEach(def=>{
+  const x=currentTimerInstance(def.id,ev),recovery=timerNeedsRecovery(x),status=recovery?'recovery':timerAggregateStatus(def,ev);
+  const display=document.querySelector(`[data-inline-timer-display="${def.id}"]`);
+  const label=document.querySelector(`[data-inline-timer-status="${def.id}"]`);
+  const card=document.querySelector(`[data-inline-timer-card="${def.id}"]`);
+  if(display)display.textContent=recovery?'--:--':fmtMs(x?timerDuration(def,x):0);
+  if(label)label.textContent=timerLiveLabel(status,recovery);
+  if(card){card.classList.toggle('fail',status==='notmet'||recovery);card.classList.toggle('ok',status==='met'||status==='live-met');}
+ });
 }
 function renderTimers(tickOnly=false){
- const s=skill(),ev=getEval();if(!s||!ev)return;const defs=s.timers||[];
- $('timerStrip').innerHTML=defs.length?defs.map(def=>{
-  const store=timerStore(def.id,ev),x=currentTimerInstance(def.id,ev),recovery=timerNeedsRecovery(x),status=recovery?'recovery':timerAggregateStatus(def,ev),ms=x&&!recovery?timerDuration(def,x):0;
-  const live=recovery?'RECOVERY REQUIRED — VOID AND RESTART':status==='met'?'STANDARD MET':status==='notmet'?'STANDARD NOT MET':status==='live-met'?'STANDARD CURRENTLY MET':'READY / INCOMPLETE';
-  const startLabel=x?.paused?'RESUME':x?.running?'RUNNING':(def.startLabel||'START');
-  const pauseBtn=def.pausePolicy==='admin-only'
-   ?`<button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`
-   :`<button class="btn ghost timerControl" data-timer-act="pause" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>PAUSE</button><button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`;
-  const history=store.instances.filter(z=>z.wallStart).map(z=>`<div class="timerHistoryRow"><span>#${z.index}${z.voided?' VOID':''}</span><span>${z.voided?esc(z.voidReason):`${fmtMs(timerDuration(def,z,z.wallStop||now()))} · ${rawTimerResult(def,z,z.wallStop||now()).toUpperCase()}`}</span></div>`).join('');
-  return `<div class="timerCard ${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}"><header><b>${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt?`<button class="btn primary timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn danger timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b>${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
- }).join(''):'';
- document.querySelectorAll('[data-timer-act]').forEach(b=>b.onclick=()=>timerAction(b.dataset.timerId,b.dataset.timerAct));
+ const s=skill(),ev=getEval();if(!s||!ev)return;
+ const standalone=(s.timers||[]).filter(def=>!def.linkedItemId);
+ $('timerStrip').classList.toggle('hidden',standalone.length===0);
+ if(!tickOnly){
+  $('timerStrip').innerHTML=standalone.map(def=>timerCardMarkup(def,ev,false)).join('');
+  bindTimerControls($('timerStrip'));
+ }
+ updateInlineTimerDisplays();
  renderActiveTimers();
 }
 function renderActiveTimers(){
@@ -648,7 +671,17 @@ function safeBackFromEvaluation(){
  if(evaluationTimingUnresolved()){alert('Assessment timing is still active, paused, or requires recovery. Stop, void, or reset the affected timing record before leaving this evaluation.');return;}
  renderEvent();
 }
-function renderCriteria(){const s=skill(),ev=getEval(),sec=s.sections[currentSection];const locked=!!ev.finalizedAt;$('criteriaList').innerHTML=sec.items.map(i=>{const r=ev.ratings[i.id]||'',d=ev.failureDetails[i.id];return `<div class="criterion ${i.critical?'critical ':''}${r}" id="crit-${i.id}"><div><div class="criterionCode">${esc(i.id)}${i.critical?'<span class="critBadge">CRITICAL</span>':''}</div><p>${esc(i.text)}</p></div><div class="ratingBtns">${['pass','fail','nt','no'].map(v=>{const lab=v==='pass'?'PASS':v==='fail'?'FAIL':v==='nt'?'NT':'N/O';const disabled=locked||(v==='nt'&&i.critical);return `<button class="ratingBtn ${v} ${r===v?'active':''}" data-rate="${v}" data-item="${i.id}" ${disabled?'disabled':''}>${lab}</button>`;}).join('')}</div>${r==='fail'&&d?`<div class="failureDetail"><b>${esc(d.modeLabel)}</b> → ${esc(d.contributorLabel)}${d.comment?` · ${esc(d.comment)}`:''}</div>`:''}</div>`;}).join('');document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>setRating(b.dataset.item,b.dataset.rate));$('prevSectionBtn').disabled=currentSection===0;$('nextSectionBtn').disabled=currentSection===s.sections.length-1;}
+function renderCriteria(){
+ const s=skill(),ev=getEval(),sec=s.sections[currentSection];const locked=!!ev.finalizedAt;
+ $('criteriaList').innerHTML=sec.items.map(i=>{
+  const r=ev.ratings[i.id]||'',d=ev.failureDetails[i.id],linked=(s.timers||[]).filter(t=>t.linkedItemId===i.id);
+  const linkedTimers=linked.length?`<div class="criterionTimers">${linked.map(t=>timerCardMarkup(t,ev,true)).join('')}</div>`:'';
+  return `<div class="criterion ${i.critical?'critical ':''}${r}" id="crit-${i.id}"><div><div class="criterionCode">${esc(i.id)}${i.critical?'<span class="critBadge">CRITICAL</span>':''}${linked.length?'<span class="timerLinkedBadge">TIMED</span>':''}</div><p>${esc(i.text)}</p></div><div class="ratingBtns">${['pass','fail','nt','no'].map(v=>{const lab=v==='pass'?'PASS':v==='fail'?'FAIL':v==='nt'?'NT':'N/O';const disabled=locked||(v==='nt'&&i.critical);return `<button class="ratingBtn ${v} ${r===v?'active':''}" data-rate="${v}" data-item="${i.id}" ${disabled?'disabled':''}>${lab}</button>`;}).join('')}</div>${linkedTimers}${r==='fail'&&d?`<div class="failureDetail"><b>${esc(d.modeLabel)}</b> → ${esc(d.contributorLabel)}${d.comment?` · ${esc(d.comment)}`:''}</div>`:''}</div>`;
+ }).join('');
+ document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>setRating(b.dataset.item,b.dataset.rate));
+ bindTimerControls($('criteriaList'));
+ $('prevSectionBtn').disabled=currentSection===0;$('nextSectionBtn').disabled=currentSection===s.sections.length-1;
+}
 function setRating(id,rating){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||!i)return;if(rating==='fail')return beginFailureClassification(id);if(rating==='nt'&&i.critical){alert('Critical criteria cannot be marked NT.');return;}if(rating==='nt')return requestNt(id);ev.ratings[id]=rating;if(rating!=='fail')delete ev.failureDetails[id];saveDb();renderCriteria();renderEvalKpis();}
 function requestNt(id){openModal('Not Tested — scenario did not elicit criterion',`<p>NT may be used only for a <b>noncritical criterion</b> that the approved scenario did not elicit. It may not excuse an observed error or omission.</p><form id="ntForm"><div class="formGrid"><label class="full"><span>Objective scenario note (optional)</span><textarea name="detail" rows="3" placeholder="Briefly document why the approved scenario did not elicit this criterion"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Apply NT</button></div></form>`);$('ntForm').onsubmit=e=>{e.preventDefault();const ev=getEval();ev.ratings[id]='nt';ev.ntReasons[id]={code:'scenario-not-elicited',label:'Approved scenario did not elicit criterion',detail:new FormData(e.target).get('detail')||'',at:now()};delete ev.failureDetails[id];saveDb();closeModal();renderCriteria();renderEvalKpis();};}
 function beginFailureClassification(id,opts={}){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||!i)return;const prior=ev.failureDetails[id]||{};chooseFailureMode(id,opts.forcedMode||prior.mode||'');}
