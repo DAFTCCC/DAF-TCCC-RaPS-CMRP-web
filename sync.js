@@ -291,10 +291,13 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  await patchRowsById(CFG.tables.events,changedEvents);
  await upsert(CFG.tables.participants,x.participants);
  await upsert(CFG.tables.evaluations,writableEvaluations);
- // fr_voids is append-only audit history. Never UPSERT an existing void:
- // duplicate IDs must be ignored rather than converted into UPDATEs, because
- // RLS intentionally grants INSERT + SELECT but no UPDATE policy.
- await insertIgnoreDuplicates(CFG.tables.voids,x.voids);
+ // fr_voids is append-only audit history. Do not use any ON CONFLICT path:
+ // PostgreSQL may still evaluate conflict visibility through RLS. Read the
+ // existing IDs first and plain-INSERT only genuinely new void records.
+ const serverVoids=await getAll(CFG.tables.voids);
+ const existingVoidIds=new Set(serverVoids.map(r=>r.id));
+ const newVoids=x.voids.filter(r=>!existingVoidIds.has(r.id));
+ await insertRows(CFG.tables.voids,newVoids);
 }
 function rebuild(x,fallback){
  const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,closedAt:r.closed_at?Date.parse(r.closed_at):null,closedBy:r.closed_by||null,deletedAt:r.deleted_at?Date.parse(r.deleted_at):null,_serverCreatedBy:r.created_by||null,_syncDirtyEvent:false,participants:[]}));
