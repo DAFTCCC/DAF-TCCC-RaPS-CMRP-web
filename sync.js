@@ -197,6 +197,14 @@ async function patchRowsById(table,rows){
  }
 }
 async function upsert(table,rows){if(!rows.length)return;await api('/rest/v1/'+table+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});}
+async function insertIgnoreDuplicates(table,rows){
+ if(!rows.length)return;
+ await api('/rest/v1/'+table+'?on_conflict=id',{
+  method:'POST',
+  headers:{Prefer:'resolution=ignore-duplicates,return=minimal'},
+  body:JSON.stringify(rows)
+ });
+}
 async function getAll(table){return (await api('/rest/v1/'+table+'?select=*',{method:'GET'}))||[];}
 function evaluatorPushScope(db,x,serverEvents,userId){
  const serverIds=new Set((serverEvents||[]).map(e=>e.id));
@@ -283,7 +291,10 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  await patchRowsById(CFG.tables.events,changedEvents);
  await upsert(CFG.tables.participants,x.participants);
  await upsert(CFG.tables.evaluations,writableEvaluations);
- await upsert(CFG.tables.voids,x.voids);
+ // fr_voids is append-only audit history. Never UPSERT an existing void:
+ // duplicate IDs must be ignored rather than converted into UPDATEs, because
+ // RLS intentionally grants INSERT + SELECT but no UPDATE policy.
+ await insertIgnoreDuplicates(CFG.tables.voids,x.voids);
 }
 function rebuild(x,fallback){
  const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,closedAt:r.closed_at?Date.parse(r.closed_at):null,closedBy:r.closed_by||null,deletedAt:r.deleted_at?Date.parse(r.deleted_at):null,_serverCreatedBy:r.created_by||null,_syncDirtyEvent:false,participants:[]}));
