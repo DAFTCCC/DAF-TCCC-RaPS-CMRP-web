@@ -79,3 +79,13 @@ for(const changed of ['local edit','server reset']){
  assert.equal(JSON.stringify(restored.trainingExposures),JSON.stringify(trainingExposures));
  assert.equal(JSON.stringify(restored.evaluation.assessment),JSON.stringify(assessment));
 });
+
+test('warning-only mode disables synchronization even with a saved authenticated session',async()=>{
+ let requests=0;
+ const h=harness(async()=>{requests++;return response([]);});
+ h.context.window.FIELDREADY_ACCESS={mode:'warning-only'};
+ assert.equal(h.sync.configured(),false);
+ await h.sync.syncNow({events:[]});
+ await assert.rejects(h.sync.currentProfile(),/Server access is disabled/);
+ assert.equal(requests,0);
+});

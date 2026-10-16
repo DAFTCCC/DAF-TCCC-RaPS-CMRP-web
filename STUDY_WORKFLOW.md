@@ -35,3 +35,9 @@ The longitudinal record's **Export study records** CSV includes enrollment, asse
 The supplied plan describes a 28-point binary TTA checklist; the app currently contains a different multi-module instrument. No clinical criteria or thresholds were changed. The 28-point checklist, instrument mapping, approved scenarios, assessment windows, scheduling, calibration certification workflow, self-efficacy instrument, fidelity monitoring, and statistical analysis plan still need protocol alignment before study activation.
 
 The pilot compares training approaches at follow-up points. A before/after reinforcement design alone does not randomize training intervals or prove that three- or six-month training is sufficient. Repeated assessment itself may affect learning and must be covered in the approved protocol.
+
+## Temporary warning-only testing mode
+
+`access-config.js` currently sets `mode: 'warning-only'`. Entry requires acknowledging the warning, with no email or password. Test events, grading, enrollment, exposures, and exports work locally using separate browser storage (`FIELDREADY_LOCAL_TEST_V1`). Existing authenticated study data is not loaded or changed. All server API access is disabled, including when an authenticated session was previously saved. User administration and server class archival are unavailable. Backup test records before clearing browser storage.
+
+To restore authenticated operation, set the mode back to `supabase` and change the service-worker cache name for deployment. Test records are not automatically imported or synchronized into study data. Run `python3 tests/warning_browser.py` to validate the temporary entry flow.

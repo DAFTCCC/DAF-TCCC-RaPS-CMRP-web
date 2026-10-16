@@ -6,7 +6,8 @@ const LOC = window.FIELDREADY_LOCATION_DATA || {commands:[],installations:[]};
 const BUILD = window.FIELDREADY_BUILD || {versionName:'dev'};
 const SYNC = window.FieldReadySync || null;
 const STUDY = window.FieldReadyStudy;
-const DB_KEY='FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data continuity
+const WARNING_ONLY=window.FIELDREADY_ACCESS?.mode==='warning-only';
+const DB_KEY=WARNING_ONLY?'FIELDREADY_LOCAL_TEST_V1':'FIELDREADY_LONGITUDINAL_STUDY_V4'; // retained for v4.0 local-data continuity
 const uuid=()=>crypto.randomUUID?crypto.randomUUID():`id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const now=()=>Date.now();
@@ -58,7 +59,7 @@ function setAccountUi(profile,membership=null){
   admin.classList.toggle('hidden',!['program_manager','majcom_manager','enterprise'].includes(role));
   admin.textContent=role==='enterprise'?'Users':'Team';
  }
- const canManageEvents=['program_manager','majcom_manager','enterprise'].includes(role);
+ const canManageEvents=['program_manager','majcom_manager','enterprise'].includes(role)||WARNING_ONLY;
  const newEvent=$('newEventBtn');
  const editEvent=$('editEventBtn');
  if(newEvent)newEvent.classList.toggle('hidden',!canManageEvents);
@@ -294,7 +295,7 @@ function openInviteUser(){
 function download(name,text,type='text/plain'){const blob=new Blob([text],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},0);}
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
 function eventClosed(e=event()){return !!e?.closedAt;}
-function canManageEventLifecycle(){return ['program_manager','majcom_manager','enterprise'].includes(currentAccessProfile?.role||'');}
+function canManageEventLifecycle(){return WARNING_ONLY||['program_manager','majcom_manager','enterprise'].includes(currentAccessProfile?.role||'');}
 function canDeleteEvent(){return currentAccessProfile?.role==='enterprise';}
 
 function makeEvaluation(e){
@@ -430,8 +431,8 @@ async function showEventForm(existing=null){
  const scope=accountEventScope();
  let team={evaluators:[]},assigned=[];
  try{
-  team=await SYNC.managerTeam();
-  if(existing)assigned=await SYNC.getEventEvaluators(existing.id);
+  if(!WARNING_ONLY)team=await SYNC.managerTeam();
+  if(existing&&!WARNING_ONLY)assigned=await SYNC.getEventEvaluators(existing.id);
  }catch(ex){
   alert(ex?.message||'Unable to load evaluator assignments.');
   return;
@@ -471,7 +472,7 @@ async function showEventForm(existing=null){
   evaluatorPool=[];
   if(!maj)return;
   const inst=String(f.elements.homeInstallationId.value||'');
-  try{evaluatorPool=await SYNC.eligibleEvaluators(maj,inst||null);}catch(ex){alert(ex?.message||'Unable to load eligible evaluators.');return;}
+  try{evaluatorPool=WARNING_ONLY?[{user_id:'local-test-evaluator',display_name:'Local test evaluator'}]:await SYNC.eligibleEvaluators(maj,inst||null);}catch(ex){alert(ex?.message||'Unable to load eligible evaluators.');return;}
   const existingLeadId=existing?.evaluatorId||'';
   evaluatorPool.forEach(p=>{
    const label=`${p.display_name||p.email||p.user_id} · ${p.email||''}`;
@@ -512,13 +513,15 @@ async function showEventForm(existing=null){
     db.events.push(target);
    }
    saveDb();
-   await SYNC.syncNow(db);
-   await SYNC.setEventEvaluators(target.id,selectedEvaluatorIds);
-   await SYNC.syncNow(db);
+   if(!WARNING_ONLY){
+    await SYNC.syncNow(db);
+    await SYNC.setEventEvaluators(target.id,selectedEvaluatorIds);
+    await SYNC.syncNow(db);
+   }
    closeModal();
    openEvent(target.id);
    renderHomeSilently();
-   toast(existing?'Event and evaluator assignments saved.':'Event created and evaluators assigned.');
+   toast(WARNING_ONLY?'Test event saved in this browser.':existing?'Event and evaluator assignments saved.':'Event created and evaluators assigned.');
   }catch(ex){
    alert('Event save failed: '+(ex?.message||ex));
    submit.disabled=false;
@@ -526,7 +529,7 @@ async function showEventForm(existing=null){
  };
 }
 function openEvent(id){currentEventId=id;currentParticipantId=null;renderEvent();}
-function renderEvent(){const e=event();if(!e)return renderHome();showView('eventView');SYNC?.resumeAutoSync?.();const s=skill(e),closed=eventClosed(e);$('eventKicker').textContent=`${e.timepoint.toUpperCase()} · ${e.studyArm.toUpperCase()}${closed?' · CLOSED':''}`;$('eventTitle').textContent=e.name;$('eventSub').textContent=`${s.name} · ${s.source}${closed?' · Read-only archive':''}`;const home=installation(e.homeInstallationId);const vals=[['Class status',closed?'CLOSED':'OPEN'],['Study arm',e.studyArm],['Timepoint',e.timepoint],['MAJCOM',commandName(e.majcom)],['Home installation',eventHomeName(e)],['Host command',home?commandName(home.hostCommand):'—'],['Unit',e.unit||'—'],['Training location',e.trainingLocation||'—'],['Scenario',e.scenario||'—'],['Scenario version',e.scenarioVersion||'1'],['Date',e.date||'—'],['Evaluator',e.leadEvaluator||'—'],['Closed at',closed?new Date(e.closedAt).toLocaleString():'—'],['App version',BUILD.versionName]];$('eventMeta').innerHTML=vals.map(([a,b])=>`<div class="metaCell"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');const edit=$('editEventBtn'),add=$('addParticipantBtn'),close=$('closeEventBtn'),del=$('deleteEventBtn');if(edit)edit.classList.toggle('hidden',closed||!canManageEventLifecycle());if(add)add.classList.toggle('hidden',closed);if(close){close.classList.toggle('hidden',closed||!canManageEventLifecycle());close.disabled=false;}if(del)del.classList.toggle('hidden',!canDeleteEvent());renderRoster();renderEventAnalytics();}
+function renderEvent(){const e=event();if(!e)return renderHome();showView('eventView');SYNC?.resumeAutoSync?.();const s=skill(e),closed=eventClosed(e);$('eventKicker').textContent=`${e.timepoint.toUpperCase()} · ${e.studyArm.toUpperCase()}${closed?' · CLOSED':''}`;$('eventTitle').textContent=e.name;$('eventSub').textContent=`${s.name} · ${s.source}${closed?' · Read-only archive':''}`;const home=installation(e.homeInstallationId);const vals=[['Class status',closed?'CLOSED':'OPEN'],['Study arm',e.studyArm],['Timepoint',e.timepoint],['MAJCOM',commandName(e.majcom)],['Home installation',eventHomeName(e)],['Host command',home?commandName(home.hostCommand):'—'],['Unit',e.unit||'—'],['Training location',e.trainingLocation||'—'],['Scenario',e.scenario||'—'],['Scenario version',e.scenarioVersion||'1'],['Date',e.date||'—'],['Evaluator',e.leadEvaluator||'—'],['Closed at',closed?new Date(e.closedAt).toLocaleString():'—'],['App version',BUILD.versionName]];$('eventMeta').innerHTML=vals.map(([a,b])=>`<div class="metaCell"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');const edit=$('editEventBtn'),add=$('addParticipantBtn'),close=$('closeEventBtn'),del=$('deleteEventBtn');if(edit)edit.classList.toggle('hidden',closed||!canManageEventLifecycle());if(add)add.classList.toggle('hidden',closed);if(close){close.classList.toggle('hidden',WARNING_ONLY||closed||!canManageEventLifecycle());close.disabled=false;}if(del)del.classList.toggle('hidden',!canDeleteEvent());renderRoster();renderEventAnalytics();}
 function renderHomeSilently(){populateFilters();renderManagement();renderParticipantIndex();renderEvents();}
 function renderRoster(){const e=event(),closed=eventClosed(e);$('rosterTable').innerHTML=e.participants.length?`<table class="dataTable"><thead><tr><th>Participant ID</th><th>AFSC</th><th>Clinical years</th><th>Work section</th><th>Exposure</th><th>Status</th><th></th></tr></thead><tbody>${e.participants.map(p=>{const ev=p.evaluation,score=ev?scoring(ev,skill(e)):null,status=ev?.finalizedAt?ev.finalResult:ev?'IN PROGRESS':'NOT STARTED';return `<tr><td><b>${esc(p.participantId)}</b><div class="tiny">${esc(p.rank||'')}</div></td><td>${esc(p.afsc||'—')}</td><td>${esc(p.clinicalYears??'—')}</td><td>${esc(p.workSection||'—')}</td><td class="tiny">${p.intervention?.sessions||0} sessions · ${p.intervention?.repetitions||0} reps · ${p.intervention?.coachingEvents||0} coaching</td><td><span class="status ${status==='PASS'?'pass':status==='FAIL'?'fail':''}">${status}</span>${ev?`<div class="tiny">${score.percent==null?'—':pct(score.percent)}</div>`:''}</td><td><button class="btn ghost" data-grade="${p.id}">${closed||ev?.finalizedAt?'Review':'Grade'}</button> <button class="btn ghost" data-longitudinal="${esc(p.participantId)}">Longitudinal</button> ${closed?'':`<button class="btn ghost" data-editp="${p.id}">Edit</button>`}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty">No participants rostered.</div>';document.querySelectorAll('[data-grade]').forEach(b=>b.onclick=()=>openEvaluation(b.dataset.grade));document.querySelectorAll('[data-longitudinal]').forEach(b=>b.onclick=()=>openLongitudinalRecord(b.dataset.longitudinal,e.skillId));document.querySelectorAll('[data-editp]').forEach(b=>b.onclick=()=>showParticipantForm(e.participants.find(p=>p.id===b.dataset.editp)));}
 function showParticipantForm(existing=null){const e=event();if(eventClosed(e)){toast('Closed classes are read-only.');return;}openModal(existing?'Edit Participant':'Add Participant',`<form id="participantForm"><div class="formGrid">
@@ -794,7 +797,7 @@ function reviewFinalize(){
   renderEvaluation();
   releaseEvalWakeLock();
   toast(`Evaluation finalized: ${predicted}`);
-  try{await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
+  try{if(!WARNING_ONLY)await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
  };
 }
 function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
@@ -809,6 +812,7 @@ function managementSummaryCsv(){const events=scopedEvents(),headers=['event_id',
 function enterpriseCsv(){const saved=currentEventId;const events=scopedEvents();const out=[];events.forEach(e=>{currentEventId=e.id;const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor'];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};out.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),e.skillId,p.participantId,p.afsc,p.clinicalYears,p.workSection,ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'']);});});});currentEventId=saved;const headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor'];download('FieldReady_Enterprise_Detail.csv',[headers,...out].map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
 
 function openSyncPanel(){
+ if(WARNING_ONLY){openModal('Local testing', '<p>Login is temporarily disabled. Test records are saved only in this browser. Server synchronization is disabled. Use Backup to retain your test records.</p>');return;}
  const s=SYNC?.status?.()||{code:'local',label:'LOCAL ONLY',detail:'Backend sync is unavailable.'};
  const sess=SYNC?.session?.();
  if(!SYNC?.configured?.()){
@@ -835,7 +839,7 @@ function syncAccessButton(){
   const ack=$('ackCheck').checked;
   const email=String($('accessEmail')?.value||'').trim();
   const pw=String($('accessPassword')?.value||'');
-  $('enterBtn').disabled=!ack||!email||!pw||!SYNC?.configured?.();
+  $('enterBtn').disabled=WARNING_ONLY?!ack:!ack||!email||!pw||!SYNC?.configured?.();
 }
 async function loadCurrentAccess(){
  const profile=await SYNC.currentProfile();
@@ -847,6 +851,7 @@ async function unlockFieldReady(){
   const err=$('accessError');
   err?.classList.add('hidden');
   if(!$('ackCheck').checked){syncAccessButton();return;}
+  if(WARNING_ONLY){setAccountUi(null);$('safeguard').classList.add('hidden');renderHome();toast('Local testing · records stay in this browser.');return;}
   if(!SYNC?.configured?.()){
     err.textContent='FieldReady backend is not configured.';
     err.classList.remove('hidden');
@@ -872,14 +877,14 @@ async function unlockFieldReady(){
   }
 }
 async function lockFieldReady(){
-  try{await SYNC?.signOut?.();}catch{}
+  try{if(!WARNING_ONLY)await SYNC?.signOut?.();}catch{}
   setAccountUi(null,null);
   $('ackCheck').checked=false;
   $('accessPassword').value='';
   $('safeguard').classList.remove('hidden');
   syncAccessButton();
   setTimeout(()=>$('accessEmail')?.focus(),50);
-  toast('FieldReady signed out.');
+  toast(WARNING_ONLY?'Warning acknowledgement required.':'FieldReady signed out.');
 }
 $('ackCheck').onchange=syncAccessButton;
 $('accessEmail').oninput=syncAccessButton;
@@ -953,7 +958,15 @@ async function restoreAuthorizedSession(){
   const err=$('accessError');err.textContent=e?.message||'This account is not authorized for FieldReady.';err.classList.remove('hidden');
  }
 }
-handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
+if(WARNING_ONLY){
+ document.querySelector('.accessGate').classList.add('hidden');
+ $('requestAccountBtn').classList.add('hidden');
+ $('enterBtn').textContent='Acknowledge & enter';
+ $('lockBtn').textContent='Warning';
+ $('ackCheck').parentElement.lastChild.textContent=' I understand this is temporary local testing and will use synthetic data only.';
+ document.querySelector('.safeguardCard > p:not(.eyebrow)').textContent='Temporary testing mode: login is disabled. Use synthetic data only. Records stay in this browser and are not synchronized to the study server.';
+ setAccountUi(null);syncAccessButton();
+}else handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
 $('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('closeEventBtn').onclick=closeEvent;$('deleteEventBtn').onclick=deleteEvent;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
 $('backRosterBtn').onclick=safeBackFromEvaluation;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;

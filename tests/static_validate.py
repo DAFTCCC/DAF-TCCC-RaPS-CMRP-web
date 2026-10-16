@@ -134,7 +134,7 @@ if not version_match or not re.fullmatch(r'\d+\.\d+\.\d+-study-web',version_matc
 access=(root/'access-config.js').read_text(encoding='utf-8') if (root/'access-config.js').exists() else ''
 for id_ in ['accessEmail','accessPassword','accessError','ackCheck','enterBtn','lockBtn']:
     if f'id="{id_}"' not in html: errors.append(f'Missing login-gate DOM id: {id_}')
-if "mode: 'supabase'" not in access: errors.append('access-config.js must declare Supabase login mode')
+if not re.search(r"mode:\s*'(supabase|warning-only)'",access): errors.append('access-config.js must declare a supported access mode')
 for fn in ['unlockFieldReady','lockFieldReady']:
     if f'function {fn}' not in app: errors.append(f'Missing login function: {fn}')
 if 'SYNC.signIn(email,password)' not in app: errors.append('Opening login must authenticate with FieldReady Supabase Auth')

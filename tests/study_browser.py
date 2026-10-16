@@ -16,6 +16,7 @@ try:
   page=b.new_page(accept_downloads=True)
   errors=[]
   page.on('pageerror',lambda e:errors.append(str(e)))
+  page.route('**/access-config.js',lambda route:route.fulfill(status=200,content_type='application/javascript',body="window.FIELDREADY_ACCESS={mode:'supabase'};"))
   page.route('**/sync.js',lambda route:route.fulfill(status=200,content_type='application/javascript',body=mock))
   page.add_init_script('localStorage.setItem("FIELDREADY_LONGITUDINAL_STUDY_V4",'+json.dumps(json.dumps({'events':events}))+');')
   page.goto(f'http://127.0.0.1:{server.server_port}',wait_until='networkidle')

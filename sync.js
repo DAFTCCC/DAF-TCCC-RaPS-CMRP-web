@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 const CFG=window.FIELDREADY_BACKEND||{enabled:false};
-const META_KEY='FIELDREADY_SYNC_META_V1';
+const META_KEY=window.FIELDREADY_ACCESS?.mode==='warning-only'?'FIELDREADY_LOCAL_TEST_META_V1':'FIELDREADY_SYNC_META_V1';
 let getDb=null;
 let busy=false;
 let timer=null;
@@ -10,7 +10,7 @@ let rerunAfterBusy=false;
 let shouldDeferAutoSync=()=>false;
 let activeDataEpoch=null;
 
-function configured(){return !!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
+function configured(){return window.FIELDREADY_ACCESS?.mode!=='warning-only'&&!!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
 function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY))||{pending:0,lastSyncAt:null,lastError:null};}catch{return {pending:0,lastSyncAt:null,lastError:null};}}
 function writeMeta(m){localStorage.setItem(META_KEY,JSON.stringify(m));renderStatus();}
 function sessionKey(){return CFG.auth?.sessionKey||'FIELDREADY_SUPABASE_SESSION_V1';}
@@ -31,6 +31,7 @@ function status(){
 function renderStatus(){const el=document.getElementById('syncStatusBtn');if(!el)return;const s=status();el.textContent=s.label;el.className='syncPill '+s.code;el.title=s.detail;}
 
 async function api(path,options={}){
+ if(window.FIELDREADY_ACCESS?.mode==='warning-only')throw new Error('Server access is disabled during local testing.');
  const s=session();
  const headers={'apikey':CFG.anonKey,'Content-Type':'application/json'};
  if(s?.access_token)headers.Authorization='Bearer '+s.access_token;
