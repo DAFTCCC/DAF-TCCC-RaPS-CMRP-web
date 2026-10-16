@@ -80,6 +80,14 @@ Each failed criterion requires:
 
 ## Longitudinal comparison behavior
 
-The participant record groups all roster instances sharing the same normalized `participantId`. For a selected skill it displays Baseline, 3-Month, and 6-Month. If more than one record exists at the same timepoint/skill, the interface prefers a finalized record and then the most recent event date. It does not average duplicate measurements automatically.
+The participant record groups all roster instances sharing the same normalized `participantId`. For a selected skill it displays Baseline, 3-Month, and 6-Month. Formal comparisons require exactly one classified finalized assessment for the selected type at each timepoint. Duplicate measurements require review; the interface never automatically substitutes the latest or best attempt. Historical assessments without classification remain unclassified.
 
 Exports include the assessment-stopwatch duration in seconds and preserve event/timepoint context so external statistical software can perform repeated-measures analysis.
+
+## Study record fields
+
+- `participant.enrollment`: stable `id`, `arm`, `enrolledDate`, `trainingDate`, `recordedAt`, and `recordedBy`; reused across roster entries. This is a shared client identity snapshot, not a database-enforced unique enrollment.
+- `participant.trainingExposures[]`: session `id`, `date`, `skillId`, `type`, `minutes`, `repetitions`, `coachingEvents`, nullable `trialsToMastery`, `notes`, `recordedAt`, `recordedBy`. Legacy `intervention` totals remain separate.
+- `evaluation.assessment`: `phase` (`baseline`, `pre`, `post`, `practice`, `retest`, or historical `unclassified`) and actual `date`. Missing metadata is not inferred.
+
+See `STUDY_WORKFLOW.md` for analysis eligibility, export meanings, and remaining study activation requirements.

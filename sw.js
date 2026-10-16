@@ -1,4 +1,4 @@
-const CACHE='fieldready-study-v4.3.3-sync1';
+const CACHE='fieldready-study-v4.3.3-study1';
 
 const ASSETS=[
   './',
@@ -11,6 +11,7 @@ const ASSETS=[
   './skills.js',
   './sync.js',
   './app.js',
+  './study.js',
   './manifest.webmanifest',
   './assets/icon.svg'
 ];

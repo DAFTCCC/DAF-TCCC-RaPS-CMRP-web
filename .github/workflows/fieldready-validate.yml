@@ -23,4 +23,4 @@ jobs:
       - name: Static validation
         run: python3 tests/static_validate.py
       - name: Sync regression tests
-        run: node --test tests/sync_regression.cjs
+        run: node --test tests/*.cjs

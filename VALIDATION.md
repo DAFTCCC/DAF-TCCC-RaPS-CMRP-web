@@ -6,7 +6,7 @@ Run:
 
 ```bash
 python3 tests/static_validate.py
-node --test tests/sync_regression.cjs
+node --test tests/*.cjs
 ```
 
 The validator checks:
@@ -52,3 +52,9 @@ Before study use, conduct the following in the browser/device actually used for 
 ## Study activation gate
 
 A successful software test does not replace clinical/source approval. The PI/AI must approve the source wording, critical flags, timers, scenario/version, and study workflow before participant data collection.
+
+## Study record validation
+
+See `STUDY_WORKFLOW.md` for the enrollment, separate pre/post assessment events, exposure recording, export, and legacy-data rules. The study regression suite exercises paired comparisons, duplicate handling, arm conflicts, source and scenario comparability, dates, and exposure deduplication. These tests do not establish clinical validity or database enforcement of enrollment uniqueness.
+
+For the study UI smoke check, with Python Playwright and `/usr/bin/chromium` available, run `python3 tests/study_browser.py`. It starts a temporary local server, uses synthetic records and mocked authentication, checks separate pre/post baseline changes, saves an exposure, and validates the study CSV column alignment. It makes no production backend writes.
