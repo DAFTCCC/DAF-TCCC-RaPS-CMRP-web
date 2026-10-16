@@ -18,9 +18,9 @@ function harness(fetch){
   setTimeout:()=>0,clearTimeout:()=>{}
  };
  // Expose internals only in this isolated test context; production API stays private.
- const source=fs.readFileSync(require.resolve('../sync.js'),'utf8').replace('window.FieldReadySync=Object.freeze({','window.testHooks={getAll};\nwindow.FieldReadySync=Object.freeze({');
+ const source=fs.readFileSync(require.resolve('../sync.js'),'utf8').replace('window.FieldReadySync=Object.freeze({','window.testHooks={getAll,flatten,rebuild};\nwindow.FieldReadySync=Object.freeze({');
  vm.runInNewContext(source,context);
- return {context,storage,events,sync:context.window.FieldReadySync,getAll:context.window.testHooks.getAll};
+ return {context,storage,events,sync:context.window.FieldReadySync,getAll:context.window.testHooks.getAll,hooks:context.window.testHooks};
 }
 const response=body=>({ok:true,text:async()=>JSON.stringify(body)});
 
@@ -67,3 +67,15 @@ for(const changed of ['local edit','server reset']){
   assert.ok(JSON.parse(h.storage.get('FIELDREADY_SYNC_META_V1')).pending>0);
  });
 }
+
+ test('enrollment, dated exposures, and assessment identity survive the sync payload round-trip',()=>{
+ const h=harness(async()=>response([]));
+ const enrollment={id:'enrollment-id',arm:'Control',enrolledDate:'2026-01-01',trainingDate:'2026-01-02'};
+ const trainingExposures=[{id:'exposure-id',date:'2026-04-02',minutes:20,repetitions:5}];
+ const assessment={phase:'pre',date:'2026-04-02'};
+ const db={events:[{id:'event-id',participants:[{id:'roster-id',participantId:'N001',enrollment,trainingExposures,evaluation:{id:'evaluation-id',assessment},voids:[]}]}]};
+ const restored=h.hooks.rebuild(h.hooks.flatten(db),db).events[0].participants[0];
+ assert.equal(JSON.stringify(restored.enrollment),JSON.stringify(enrollment));
+ assert.equal(JSON.stringify(restored.trainingExposures),JSON.stringify(trainingExposures));
+ assert.equal(JSON.stringify(restored.evaluation.assessment),JSON.stringify(assessment));
+});

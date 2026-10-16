@@ -79,7 +79,9 @@
         <div><h3>MAJCOM & Installation Performance</h3><div id="locationTable" class="tableWrap"></div></div>
         <div><h3>Observed Failure Patterns</h3><div id="failurePattern"></div><h3 class="spaced">Highest Competency Gaps</h3><div id="gapTable" class="tableWrap"></div></div>
       </div>
-      <h3 class="spaced">Retention by Study Arm & Timepoint</h3>
+      <h3 class="spaced">Matched change from post-training baseline</h3>
+      <p>Percentage-point change for the same participant and skill. Missing, unclassified, conflicting, and duplicate records are excluded, not treated as zero. Comparisons use all timepoints within the organizational and skill filters.</p>
+      <label><span>Follow-up assessment timing</span><select id="retentionPhase"><option value="">Select assessment timing</option><option value="pre">Before reinforcement</option><option value="post">After reinforcement</option></select></label>
       <div id="retentionTable" class="tableWrap"></div>
       <div class="actionsRow">
         <button id="managementCsvBtn" class="btn ghost">Management Summary CSV</button>
@@ -149,6 +151,8 @@
     </div>
     <section class="panel">
       <div class="panelHead"><div><p class="eyebrow">ASSESSMENT</p><h2>Compare study timepoints</h2></div><select id="recordSkillSelect"></select></div>
+      <div id="studyRecord"></div>
+      <label><span>Follow-up assessment timing</span><select id="recordPhase"><option value="">Select assessment timing</option><option value="pre">Before reinforcement</option><option value="post">After reinforcement</option></select></label>
       <div id="timepointCards" class="timepointGrid"></div>
     </section>
     <section class="panel">
@@ -164,6 +168,7 @@
       <div><p id="evalKicker" class="eyebrow"></p><h1 id="evalTitle"></h1><p id="evalSub" class="sub"></p><button id="recordFromEvalBtn" class="btn ghost recordLinkBtn">View Longitudinal Record</button></div>
       <div class="evalStats"><div><small>SCORE</small><b id="scoreKpi">—</b></div><div><small>CRITICAL FAIL</small><b id="critKpi">0</b></div><div><small>UNRESOLVED</small><b id="unresolvedKpi">0</b></div></div>
     </div>
+    <section id="assessmentContext" class="panel"></section>
     <div id="assessmentStopwatch" class="assessmentStopwatch"></div>
     <section id="activeTimersCard" class="panel activeTimersCard hidden">
       <div class="panelHead">
@@ -194,6 +199,7 @@
 <script src="locations.js"></script>
 <script src="skills.js"></script>
 <script src="sync.js"></script>
+<script src="study.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
