@@ -125,7 +125,9 @@ for fn in ['renderParticipantIndex','openLongitudinalRecord','renderLongitudinal
 for tp in ["'baseline'","'3-month'","'6-month'"]:
     if tp not in app: errors.append(f'Missing study timepoint in app.js: {tp}')
 if 'assessment_stopwatch_seconds' not in app: errors.append('Exports missing assessment_stopwatch_seconds')
-if '4.2.0-study-web' not in version: errors.append('version.js not updated to 4.2.0-study-web')
+version_match=re.search(r"versionName:\s*'([^']+)'",version)
+if not version_match or not re.fullmatch(r'\d+\.\d+\.\d+-study-web',version_match.group(1)):
+    errors.append('version.js must declare a semantic study-web version')
 
 
 # Single FieldReady login gate. Supabase Auth is the only credential check.
@@ -177,7 +179,8 @@ if "upsert(CFG.tables.events" in sync:
     errors.append('fr_events must never use generic upsert under hardened RLS')
 if "_syncOwnerId" not in app or "_serverCreatedBy" not in sync:
     errors.append('Sync ownership markers required to prevent cross-account event pushes')
-if "omit(e,['participants','_syncOwnerId','_serverCreatedBy'])" not in sync:
+event_omit=re.search(r"payload:omit\(e,\[([^]]*)\]\)",sync)
+if not event_omit or not {'participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent'}.issubset(set(re.findall(r"'([^']+)'",event_omit.group(1)))):
     errors.append('Sync-only ownership metadata must never be persisted in event payloads')
 
 # Remote sync must preserve the evaluator's active workflow instead of forcing Home.

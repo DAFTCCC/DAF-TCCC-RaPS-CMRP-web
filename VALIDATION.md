@@ -5,7 +5,8 @@
 Run:
 
 ```bash
-python tests/static_validate.py
+python3 tests/static_validate.py
+node --test tests/sync_regression.cjs
 ```
 
 The validator checks:
@@ -25,6 +26,8 @@ The validator checks:
 - all five study modules define a required assessment stopwatch
 - CMC overall stopwatch has a 30-minute pass standard
 - Baseline / 3-Month / 6-Month longitudinal UI and export hooks exist
+
+The sync regression suite checks capped pagination, incomplete reads, and local-edit/server-reset races before a remote snapshot is applied. It uses mocked responses and never writes to the configured backend.
 
 ## Manual browser acceptance
 

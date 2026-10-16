@@ -205,7 +205,22 @@ async function insertIgnoreDuplicates(table,rows){
   body:JSON.stringify(rows)
  });
 }
-async function getAll(table){return (await api('/rest/v1/'+table+'?select=*',{method:'GET'}))||[];}
+async function getAll(table){
+ // PostgREST caps each response. Advance by the last primary key, rather
+ // than assuming a short page means the table is complete.
+ const rows=[];
+ let lastId=null;
+ while(true){
+  const cursor=lastId===null?'':'&id=gt.'+encodeURIComponent(lastId);
+  const page=await api('/rest/v1/'+table+'?select=*&order=id.asc&limit=1000'+cursor,{method:'GET'});
+  if(!Array.isArray(page))throw new Error('Invalid table response for '+table);
+  if(!page.length)return rows;
+  const nextId=page[page.length-1]?.id;
+  if(!nextId||nextId===lastId)throw new Error('Pagination did not advance for '+table);
+  rows.push(...page);
+  lastId=nextId;
+ }
+}
 function evaluatorPushScope(db,x,serverEvents,userId){
  const serverIds=new Set((serverEvents||[]).map(e=>e.id));
  const accessibleIds=new Set(
@@ -357,6 +372,9 @@ async function syncNow(dbArg,opts={}){
   if(!opts.force&&shouldDeferAutoSync())return;
   const remote=await pull(db);
 
+  const completedEpoch=await dataEpoch();
+  if(completedEpoch!==serverEpoch)throw new Error('Server data changed during synchronization. Retry to load the current records.');
+
   // A local edit occurred while this sync was in flight. Do not let the
   // older server snapshot overwrite that newer local change. Run again
   // after the current sync finishes using the latest local database.
@@ -369,7 +387,7 @@ async function syncNow(dbArg,opts={}){
   m.pending=0;
   m.lastError=null;
   m.lastSyncAt=Date.now();
-  m.dataEpoch=await dataEpoch();
+  m.dataEpoch=completedEpoch;
   writeMeta(m);
   window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));
  }
