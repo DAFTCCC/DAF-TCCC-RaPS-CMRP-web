@@ -52,3 +52,7 @@ Before enabling the account UI in production:
 5. Validate one evaluator self-request, Enterprise approval, sign-in, Enterprise invitation, password setup, deactivation, and RLS scope before enrolling real study users.
 
 Self-service requests create an Auth identity but do not create an active FieldReady profile until an Enterprise administrator approves the request. Enterprise invitations are performed by the server-side Edge Function so the service-role credential never reaches the browser.
+
+## v4.4.0 module rollout
+
+Apply `supabase/012_add_raps_skill_modules.sql` to the dedicated **FieldReady** database before enabling ASM, CLS, or CPP event creation. The transaction replaces only `fr_events_skill_id_check` to include the three added IDs. It does not touch RaPS or alter row-level security. New databases created from the current `001_fieldready_core.sql` already include those IDs. Verify manager event creation, evaluator assignment, grading/finalization, second-device refresh, and CSV export using approved staging accounts after migration.

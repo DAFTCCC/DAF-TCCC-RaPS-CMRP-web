@@ -1,6 +1,18 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.2.0-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.4.0-study-web
 
-## v4.2.0 — optional NUC/Supabase backend foundation
+## Current workflow
+
+Role-based Supabase login is enabled. Evaluators grade assigned events; Program and MAJCOM managers manage their authorized scopes; Enterprise manages users and enterprise data. ASM, CLS, and CPP now supplement the original five modules, preserving the RaPS sheets and timing rules. See `SOURCE_MAPPING.md` for the pinned source.
+
+**Existing FieldReady databases:** apply `supabase/012_add_raps_skill_modules.sql` before creating ASM/CLS/CPP events. It extends the event skill allowlist without changing RLS. The web update cannot apply database migrations.
+
+Authorized data refreshes on login, window focus, periodically while idle, and before CSV exports. Changed records use conditional server-revision checks; conflicts preserve pending work instead of overwriting another device. Finish active grading before exporting shared results. Backup remains a local recovery download. See `STUDY_WORKFLOW.md` for study-record semantics and limitations.
+
+Temporary warning-mode test records remain separate from authenticated study data; download them from the synchronization panel if needed. They are never silently uploaded into study records.
+
+Validation: `python3 tests/static_validate.py`, `node --test tests/*.cjs`, and browser checks documented in `VALIDATION.md`.
+
+## v4.2.0 history — optional NUC/Supabase backend foundation
 
 This branch adds a **disabled-by-default** central persistence layer for the FieldReady study without changing RaPS.
 
@@ -13,9 +25,9 @@ This branch adds a **disabled-by-default** central persistence layer for the Fie
 - Server revision fields and append-only audit records are included.
 - The browser configuration accepts only the public/anon key. Never commit a service_role key.
 
-See `NUC_SETUP.md` and `supabase/001_fieldready_core.sql`. The backend remains `enabled: false` until the dedicated FieldReady NUC endpoint is configured and tested.
+See `NUC_SETUP.md` and `supabase/001_fieldready_core.sql`. The original foundation was disabled by default; the current checked-in configuration enables the dedicated FieldReady backend.
 
-FieldReady is a **static GitHub Pages evaluator and longitudinal study prototype**. It uses the DAF TCCC RaPS web app as the workflow/management baseline—event creation, MAJCOM and installation organization, roster workflow, criterion-level scoring, timers, local analytics, and export—while limiting the formal study measurements to the five approved study skill sets.
+FieldReady is a **static GitHub Pages evaluator and longitudinal study prototype**. It uses the DAF TCCC RaPS web app as the workflow/management baseline—event creation, MAJCOM and installation organization, roster workflow, criterion-level scoring, timers, local analytics, and export—with the original five study skill sets and the additional RaPS ASM, CLS, and CPP modules. Adding a module does not establish its approval for a study cohort.
 
 ## What changed in v4.1.0
 
@@ -150,7 +162,6 @@ The validation suite checks the 5×5 FAIL taxonomy, target skill counts, full CM
 
 Do not alter source criteria, critical flags, clinical timing standards, study-arm logic, finalization rules, or failure taxonomy during an active cohort without documented PI review and re-calibration when applicable.
 
-## Splash-page password gate (v4.1.1)
-The splash page now requires both the authorization acknowledgement and an access password. The temporary testing password is `FieldReady2026!`. Change it before real study use by replacing `passwordHashSha256` in `access-config.js` with the SHA-256 hash of the desired passphrase. Authentication is stored only in `sessionStorage`; closing the browser/tab session or pressing **Lock** requires the password again.
+## Access
 
-**Security boundary:** GitHub Pages is static public hosting. A client-side password gate is a useful casual-access deterrent, but it is not strong authentication and must not be treated as protection for sensitive, regulated, CUI, PHI, or authoritative research records. For controlled study access, use an approved authenticated hosting environment/backend.
+The current app requires a Supabase account with an active FieldReady profile. Access requests require administrator approval; there is no shared testing password. Database RLS enforces account scope. Browser code contains only the public anonymous key, never a service-role credential. The acknowledgement warning accompanies login.

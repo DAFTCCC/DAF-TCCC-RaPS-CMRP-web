@@ -14,8 +14,8 @@ This file records where the scored study content comes from. It is a content-con
 
 RaPS reference used for CMC structure and timing:
 
-- Live app: `https://afomsteam.github.io/DAF-TCCC-RaPS-WEB/`
-- Repository source: `https://github.com/afomsteam/DAF-TCCC-RaPS-WEB/`
+- Live app: `https://daftccc.github.io/DAF-TCCC-RaPS-WEB/`
+- Repository source: `https://github.com/DAFTCCC/DAF-TCCC-RaPS-WEB/`
 - Tier configuration: `tiers.js`, Tier 3 / CMC
 
 FieldReady intentionally carries **the entire RaPS Tier 3 CMC criterion sequence** rather than the smaller CMC representation in v4.0. Although the source title inside RaPS is “Tactical Trauma Assessment — Abbreviated,” this study build does not abbreviate the RaPS Tier 3 content further.
@@ -35,3 +35,15 @@ FieldReady intentionally carries **the entire RaPS Tier 3 CMC criterion sequence
 ## Universal assessment stopwatch
 
 The study adds one continuous formal-assessment stopwatch to TQ, NPA, NDC, and Blood so that assessment duration can be compared longitudinally. This added stopwatch is a **study measurement field**; it does not create a new clinical pass/fail standard for those four modules. CMC is different: its overall stopwatch is the RaPS global TTA clock and therefore retains the ≤30-minute pass rule.
+
+## Added RaPS modules (v4.4.0)
+
+Imported from `DAFTCCC/DAF-TCCC-RaPS-WEB`, commit `c7226cf34d452efbfa3ff27d64a18490fe9b1642` (RaPS `3.4.12-web.7`). `raps-skills.js` preserves the complete upstream tier sections, item IDs, text, critical flags, provenance, source references, and timer definitions. The adapter converts timer seconds to milliseconds and maps each global timer to the assessment stopwatch. Each module retains the 75% threshold, critical-failure rule, and required global timing rule. Existing study skills remain unchanged.
+
+| Module | RaPS tier | Criteria including DAF supplements | Clinical timers | Global timer |
+|---|---|---:|---:|---|
+| ASM | 1 | 33 | 2 | ≤30 minutes |
+| CLS | 2 | 71 | 2 | ≤30 minutes |
+| CPP | 4 | 124 | 8 | ≤30 minutes |
+
+CPP's optional ketamine/analgesia clocks retain their upstream `requiredForPass: false` status; they do not independently block a linked PASS without a completed optional clock. Running clocks still must stop before finalization. `tests/raps_skills.cjs` checks the pinned source digest, exact sections, links, and converted standards.

@@ -9,8 +9,11 @@ let changeGeneration=0;
 let rerunAfterBusy=false;
 let shouldDeferAutoSync=()=>false;
 let activeDataEpoch=null;
+let refreshPromise=null;
+let activeSyncUser=null;
 
 function configured(){return window.FIELDREADY_ACCESS?.mode!=='warning-only'&&!!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
+function cachedUserId(){return readMeta().userId||null;}
 function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY))||{pending:0,lastSyncAt:null,lastError:null};}catch{return {pending:0,lastSyncAt:null,lastError:null};}}
 function writeMeta(m){localStorage.setItem(META_KEY,JSON.stringify(m));renderStatus();}
 function sessionKey(){return CFG.auth?.sessionKey||'FIELDREADY_SUPABASE_SESSION_V1';}
@@ -32,12 +35,19 @@ function renderStatus(){const el=document.getElementById('syncStatusBtn');if(!el
 
 async function api(path,options={}){
  if(window.FIELDREADY_ACCESS?.mode==='warning-only')throw new Error('Server access is disabled during local testing.');
- const s=session();
+ let s=session();
+ if(path.startsWith('/rest/v1/')||path.startsWith('/functions/v1/')||path==='/auth/v1/user'){
+  await ensureSession();s=session();
+  if(!s?.access_token)throw new Error('Sign in again before accessing server records.');
+ }
+ if(busy&&activeSyncUser&&(path.startsWith('/rest/v1/')||path.startsWith('/functions/v1/'))&&s?.user?.id!==activeSyncUser)throw new Error('Account changed during synchronization. Retry after it stops.');
+ const requestUser=s?.user?.id;
  const headers={'apikey':CFG.anonKey,'Content-Type':'application/json'};
  if(s?.access_token)headers.Authorization='Bearer '+s.access_token;
  if(activeDataEpoch&&path.startsWith('/rest/v1/'))headers['x-fieldready-epoch']=activeDataEpoch;
  Object.assign(headers,options.headers||{});
  const res=await fetch(CFG.url.replace(/\/$/,'')+path,{...options,headers});
+ if((path.startsWith('/rest/v1/')||path.startsWith('/functions/v1/'))&&session()?.user?.id!==requestUser)throw new Error('Account changed during the request.');
  const txt=await res.text();let body=null;try{body=txt?JSON.parse(txt):null;}catch{body=txt;}
  if(!res.ok){const msg=typeof body==='string'?body:(body?.message||body?.error_description||body?.error||('HTTP '+res.status));const e=new Error(msg);e.status=res.status;throw e;}
  return body;
@@ -47,7 +57,7 @@ async function signIn(email,password){
  if(!configured())throw new Error('FieldReady backend is not configured.');
  const r=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});
  if(!r?.access_token)throw new Error('No access token returned.');
- setSession({access_token:r.access_token,refresh_token:r.refresh_token,expires_at:r.expires_at,user:r.user?{id:r.user.id,email:r.user.email}:null});
+ setSession({access_token:r.access_token,refresh_token:r.refresh_token,expires_at:r.expires_at||((Date.now()/1000)+Number(r.expires_in||3600)),user:r.user?{id:r.user.id,email:r.user.email}:null});
  try{
   const profile=await requireAuthorizedProfile();
   return {...session(),profile};
@@ -56,7 +66,11 @@ async function signIn(email,password){
   throw e;
  }
 }
-async function signOut(){try{if(session()?.access_token)await api('/auth/v1/logout',{method:'POST'});}catch{}activeDataEpoch=null;setSession(null);}
+async function signOut(){
+ const old=session();
+ clearTimeout(timer);rerunAfterBusy=false;activeDataEpoch=null;setSession(null);
+ try{if(old?.access_token)await api('/auth/v1/logout',{method:'POST',headers:{Authorization:'Bearer '+old.access_token}});}catch{}
+}
 
 async function acceptAuthCallback(){
  const raw=location.hash.startsWith('#')?location.hash.slice(1):'';
@@ -173,39 +187,80 @@ async function ensureSession(){
  const s=session();if(!s?.access_token)return null;
  if(!s.expires_at||Date.now()/1000<Number(s.expires_at)-90)return s;
  if(!s.refresh_token){setSession(null);return null;}
- try{const r=await api('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:s.refresh_token})});setSession({access_token:r.access_token,refresh_token:r.refresh_token||s.refresh_token,expires_at:r.expires_at,user:r.user?{id:r.user.id,email:r.user.email}:s.user});return session();}catch(e){setSession(null);throw e;}
+ if(refreshPromise)return refreshPromise;
+ refreshPromise=(async()=>{
+  try{
+   const r=await api('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:s.refresh_token})});
+   if(session()?.user?.id!==s.user?.id)throw new Error('Account changed while refreshing the session.');
+   setSession({access_token:r.access_token,refresh_token:r.refresh_token||s.refresh_token,expires_at:r.expires_at||((Date.now()/1000)+Number(r.expires_in||3600)),user:r.user?{id:r.user.id,email:r.user.email}:s.user});
+   return session();
+  }catch(e){if(session()?.user?.id===s.user?.id)setSession(null);throw e;}
+  finally{refreshPromise=null;}
+ })();
+ return refreshPromise;
 }
 
 function omit(o,keys){const x={};Object.entries(o||{}).forEach(([k,v])=>{if(!keys.includes(k))x[k]=v;});return x;}
+const SYNC_FIELDS=['_syncBaseline','_serverRevision'];
+function stable(value){
+ if(Array.isArray(value))return value.map(stable);
+ if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])]));
+ return value;
+}
+function fingerprint(value){return JSON.stringify(stable(value));}
+function captureBaseline(db){
+ (db?.events||[]).forEach(e=>{
+  e._syncBaseline=fingerprint(omit(e,['participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent','closedAt','closedBy','deletedAt',...SYNC_FIELDS]));
+  (e.participants||[]).forEach(p=>{
+   p._syncBaseline=fingerprint(omit(p,['evaluation','voids',...SYNC_FIELDS]));
+   if(p.evaluation)p.evaluation._syncBaseline=fingerprint(omit(p.evaluation,SYNC_FIELDS));
+  });
+ });
+ return db;
+}
+function writePlan(rows,serverRows,table){
+ const server=new Map(serverRows.map(r=>[r.id,r]));
+ const inserts=[],updates=[];
+ for(const row of rows){
+  const wire=omit(row,['_syncOwnerId','_serverCreatedBy','_syncDirtyEvent',...SYNC_FIELDS]);
+  const remote=server.get(row.id);
+  if(!remote){
+   if(row._serverRevision!=null)throw new Error('Record is no longer accessible: '+table+'. Back up pending work and refresh.');
+   inserts.push(wire);continue;
+  }
+  const localPayload=fingerprint(row.payload);
+  if(row._syncBaseline===localPayload)continue;
+  if(localPayload===fingerprint(remote.payload))continue;
+  if(!row._syncBaseline||row._serverRevision==null||String(row._serverRevision)!==String(remote.server_revision)||remote.finalized_at){
+   throw new Error('Sync conflict in '+table+' ('+row.id+'). Another device changed this record. Back up local work before reloading; no automatic overwrite was performed.');
+  }
+  updates.push({wire,revision:row._serverRevision});
+ }
+ return {table,inserts,updates};
+}
+async function applyPlan(plan){
+ await insertRows(plan.table,plan.inserts);
+ for(const {wire,revision} of plan.updates){
+  const rows=await api('/rest/v1/'+plan.table+'?id=eq.'+encodeURIComponent(wire.id)+'&server_revision=eq.'+encodeURIComponent(revision),{
+   method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(omit(wire,['id']))
+  });
+  if(!Array.isArray(rows)||rows.length!==1)throw new Error('Sync conflict in '+plan.table+'. The record changed during synchronization. Back up local work before reloading.');
+ }
+}
+
 function flatten(db){
  const events=[],participants=[],evaluations=[],voids=[];
  (db?.events||[]).forEach(e=>{
-  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,closed_at:e.closedAt?new Date(e.closedAt).toISOString():null,closed_by:e.closedBy||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent','closedAt','closedBy','deletedAt']),_syncOwnerId:e._syncOwnerId||null,_serverCreatedBy:e._serverCreatedBy||null,_syncDirtyEvent:!!e._syncDirtyEvent});
+  events.push({id:e.id,event_date:e.date||null,timepoint:e.timepoint||null,study_arm:e.studyArm||null,majcom:e.majcom||null,home_installation_id:e.homeInstallationId||null,skill_id:e.skillId||null,closed_at:e.closedAt?new Date(e.closedAt).toISOString():null,closed_by:e.closedBy||null,deleted_at:e.deletedAt?new Date(e.deletedAt).toISOString():null,payload:omit(e,['participants','_syncOwnerId','_serverCreatedBy','_syncDirtyEvent','closedAt','closedBy','deletedAt',...SYNC_FIELDS]),_syncBaseline:e._syncBaseline,_serverRevision:e._serverRevision,_syncOwnerId:e._syncOwnerId||null,_serverCreatedBy:e._serverCreatedBy||null,_syncDirtyEvent:!!e._syncDirtyEvent});
   (e.participants||[]).forEach(p=>{
-   participants.push({id:p.id,event_id:e.id,participant_code:String(p.participantId||'').trim().toUpperCase(),payload:omit(p,['evaluation','voids'])});
-   if(p.evaluation){const v=p.evaluation;evaluations.push({id:v.id,participant_id:p.id,event_id:e.id,finalized_at:v.finalizedAt?new Date(v.finalizedAt).toISOString():null,final_result:v.finalResult||null,app_version:v.appVersion||null,evaluator_id:v.evaluatorId||null,payload:v});}
+   participants.push({id:p.id,event_id:e.id,participant_code:String(p.participantId||'').trim().toUpperCase(),payload:omit(p,['evaluation','voids',...SYNC_FIELDS]),_syncBaseline:p._syncBaseline,_serverRevision:p._serverRevision});
+   if(p.evaluation){const v=p.evaluation;evaluations.push({id:v.id,participant_id:p.id,event_id:e.id,finalized_at:v.finalizedAt?new Date(v.finalizedAt).toISOString():null,final_result:v.finalResult||null,app_version:v.appVersion||null,evaluator_id:v.evaluatorId||null,payload:omit(v,SYNC_FIELDS),_syncBaseline:v._syncBaseline,_serverRevision:v._serverRevision});}
    (p.voids||[]).forEach(v=>{if(v?.id)voids.push({id:v.id,participant_id:p.id,event_id:e.id,voided_at:v.voidedAt?new Date(v.voidedAt).toISOString():new Date().toISOString(),reason:v.voidReason||'Administrative void',payload:v});});
   });
  });
  return {events,participants,evaluations,voids};
 }
 async function insertRows(table,rows){if(!rows.length)return;await api('/rest/v1/'+table,{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(rows)});}
-async function patchRowsById(table,rows){
- for(const row of rows){
-  const id=row.id;
-  const body=omit(row,['id']);
-  await api('/rest/v1/'+table+'?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(body)});
- }
-}
-async function upsert(table,rows){if(!rows.length)return;await api('/rest/v1/'+table+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});}
-async function insertIgnoreDuplicates(table,rows){
- if(!rows.length)return;
- await api('/rest/v1/'+table+'?on_conflict=id',{
-  method:'POST',
-  headers:{Prefer:'resolution=ignore-duplicates,return=minimal'},
-  body:JSON.stringify(rows)
- });
-}
 async function getAll(table){
  // PostgREST caps each response. Advance by the last primary key, rather
  // than assuming a short page means the table is complete.
@@ -281,7 +336,6 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  if(profile?.role==='evaluator')x=evaluatorPushScope(db,x,serverEvents,userId);
  else if(profile?.role==='program_manager'||profile?.role==='majcom_manager')x=managerPushScope(x,profile,membership,serverEvents,userId);
 
- const locked=new Set((serverEvaluations||[]).filter(r=>r.finalized_at).map(r=>r.id));
  const closedEventIds=new Set((serverEvents||[]).filter(r=>r.closed_at).map(r=>r.id));
  const inOpenEvent=r=>!closedEventIds.has(r.event_id||r.id);
  x={
@@ -290,23 +344,15 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
   evaluations:x.evaluations.filter(inOpenEvent),
   voids:x.voids.filter(inOpenEvent)
  };
- const writableEvaluations=x.evaluations.filter(r=>!locked.has(r.id));
- const serverEventIds=new Set((serverEvents||[]).map(r=>r.id));
- const eventWireRows=x.events.map(r=>({
-  raw:r,
-  wire:omit(r,['_syncOwnerId','_serverCreatedBy','_syncDirtyEvent'])
- }));
- const newEvents=eventWireRows.filter(x=>!serverEventIds.has(x.raw.id)).map(x=>x.wire);
- const changedEvents=eventWireRows.filter(x=>serverEventIds.has(x.raw.id)&&x.raw._syncDirtyEvent).map(x=>x.wire);
-
- // fr_events intentionally avoids INSERT .. ON CONFLICT DO UPDATE.
- // PostgreSQL RLS evaluates that conflict-write path differently from a plain
- // INSERT and rejects otherwise-valid scoped-manager creations. New events use
- // a normal INSERT; existing explicitly edited events use PATCH by primary key.
- await insertRows(CFG.tables.events,newEvents);
- await patchRowsById(CFG.tables.events,changedEvents);
- await upsert(CFG.tables.participants,x.participants);
- await upsert(CFG.tables.evaluations,writableEvaluations);
+ const serverParticipants=await getAll(CFG.tables.participants);
+ // Validate every changed row before writing any table. Unchanged snapshots
+ // never overwrite records updated on another device.
+ const plans=[
+  writePlan(x.events,serverEvents,CFG.tables.events),
+  writePlan(x.participants,serverParticipants,CFG.tables.participants),
+  writePlan(x.evaluations,serverEvaluations,CFG.tables.evaluations)
+ ];
+ for(const plan of plans)await applyPlan(plan);
  // fr_voids is append-only audit history. Do not use any ON CONFLICT path:
  // PostgreSQL may still evaluate conflict visibility through RLS. Read the
  // existing IDs first and plain-INSERT only genuinely new void records.
@@ -316,40 +362,63 @@ async function push(db,serverEvaluations=[],serverEvents=[],profile=null,members
  await insertRows(CFG.tables.voids,newVoids);
 }
 function rebuild(x,fallback){
- const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,closedAt:r.closed_at?Date.parse(r.closed_at):null,closedBy:r.closed_by||null,deletedAt:r.deleted_at?Date.parse(r.deleted_at):null,_serverCreatedBy:r.created_by||null,_syncDirtyEvent:false,participants:[]}));
- const pMap=new Map();x.participants.forEach(r=>{const e=eMap.get(r.event_id);if(!e)return;const p={...(r.payload||{}),id:r.id,participantId:(r.payload||{}).participantId||r.participant_code,voids:[],evaluation:null};e.participants.push(p);pMap.set(r.id,p);});
- x.evaluations.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.evaluation={...(r.payload||{}),id:r.id};});
+ const eMap=new Map();x.events.forEach(r=>eMap.set(r.id,{...(r.payload||{}),id:r.id,closedAt:r.closed_at?Date.parse(r.closed_at):null,closedBy:r.closed_by||null,deletedAt:r.deleted_at?Date.parse(r.deleted_at):null,_serverCreatedBy:r.created_by||null,_serverRevision:r.server_revision,_syncDirtyEvent:false,participants:[]}));
+ const pMap=new Map();x.participants.forEach(r=>{const e=eMap.get(r.event_id);if(!e)return;const p={...(r.payload||{}),id:r.id,participantId:(r.payload||{}).participantId||r.participant_code,voids:[],evaluation:null,_serverRevision:r.server_revision};e.participants.push(p);pMap.set(r.id,p);});
+ const voidedIds=new Set(x.voids.map(r=>r.id));
+ x.evaluations.forEach(r=>{
+  if(voidedIds.has(r.id))return;
+  const p=pMap.get(r.participant_id);if(!p)return;
+  if(p.evaluation)throw new Error('Multiple active evaluations for participant '+p.participantId+'. Controlled record review is required; no attempt was selected automatically.');
+  p.evaluation={...(r.payload||{}),id:r.id,_serverRevision:r.server_revision};
+ });
  x.voids.forEach(r=>{const p=pMap.get(r.participant_id);if(p)p.voids.push({...(r.payload||{}),id:r.id});});
  return {schemaVersion:fallback?.schemaVersion||5,appVersion:fallback?.appVersion||window.FIELDREADY_BUILD?.versionName||'dev',events:[...eMap.values()]};
 }
-async function pull(fallback){const a=await Promise.all([getAll(CFG.tables.events),getAll(CFG.tables.participants),getAll(CFG.tables.evaluations),getAll(CFG.tables.voids)]);return rebuild({events:a[0],participants:a[1],evaluations:a[2],voids:a[3]},fallback);}
+async function pull(fallback){const a=await Promise.all([getAll(CFG.tables.events),getAll(CFG.tables.participants),getAll(CFG.tables.evaluations),getAll(CFG.tables.voids)]);return captureBaseline(rebuild({events:a[0],participants:a[1],evaluations:a[2],voids:a[3]},fallback));}
 async function syncNow(dbArg,opts={}){
- if(!opts.force&&shouldDeferAutoSync()){renderStatus();return;}
- if(busy){rerunAfterBusy=true;return;}
- if(!configured()||!navigator.onLine)return;
+ if(!opts.force&&shouldDeferAutoSync()){if(opts.requireFresh)throw new Error('Finish grading before refreshing an export. Use Backup to save pending local work.');renderStatus();return;}
+ if(busy){if(opts.requireFresh)throw new Error('Synchronization is already in progress. Retry the export when it finishes.');rerunAfterBusy=true;return;}
+ if(!configured()||!navigator.onLine){if(opts.requireFresh)throw new Error('Connect to the study server before exporting synchronized data. Use Backup for an offline copy.');return;}
 
  const source=dbArg||getDb?.();
  if(!source)throw new Error('No local FieldReady database is available.');
 
  await ensureSession();
- if(!session()?.access_token){renderStatus();return;}
- if(!opts.force&&shouldDeferAutoSync()){renderStatus();return;}
+ if(busy){if(opts.requireFresh)throw new Error('Synchronization is already in progress. Retry the export.');rerunAfterBusy=true;return;}
+ if(!session()?.access_token){if(opts.requireFresh)throw new Error('Sign in before exporting synchronized data.');renderStatus();return;}
+ if(!opts.force&&shouldDeferAutoSync()){if(opts.requireFresh)throw new Error('Finish grading before refreshing an export. Use Backup to save pending local work.');renderStatus();return;}
 
- busy=true;renderStatus();
+ busy=true;activeSyncUser=session()?.user?.id;renderStatus();
  const startedGeneration=changeGeneration;
  try{
   // Server generation is authoritative. A client that predates a reset must
   // pull the current server state before it is ever allowed to push.
+  const syncUserId=session()?.user?.id;
+  const profile=await requireAuthorizedProfile();
+  if(!['evaluator','program_manager','majcom_manager','enterprise'].includes(profile.role))throw new Error('Unsupported FieldReady role.');
   const serverEpoch=await dataEpoch();
   activeDataEpoch=serverEpoch;
   const metaBefore=readMeta();
-  if(metaBefore.dataEpoch!==serverEpoch){
+  if(metaBefore.dataEpoch!==serverEpoch||metaBefore.userId!==syncUserId){
    const remote=await pull(source);
+   if(session()?.user?.id!==syncUserId)throw new Error('Account changed during synchronization.');
+   const completedEpoch=await dataEpoch();
+   if(completedEpoch!==serverEpoch)throw new Error('Server data changed during synchronization. Retry.');
+   if(session()?.user?.id!==syncUserId)throw new Error('Account changed during synchronization.');
+   if(shouldDeferAutoSync()){
+    if(opts.requireFresh)throw new Error('Grading started during synchronization. Retry the export after grading.');
+    return;
+   }
+   if(metaBefore.pending||changeGeneration!==startedGeneration){
+    const owner=metaBefore.userId||syncUserId;
+    localStorage.setItem('FIELDREADY_SYNC_RECOVERY_'+owner,JSON.stringify(source));
+   }
    const m=readMeta();
    m.pending=0;
    m.lastError=null;
    m.lastSyncAt=Date.now();
    m.dataEpoch=serverEpoch;
+   m.userId=syncUserId;
    writeMeta(m);
    window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote,epochReset:true}}));
    return;
@@ -361,7 +430,6 @@ async function syncNow(dbArg,opts={}){
    ?structuredClone(source)
    :JSON.parse(JSON.stringify(source));
 
-  const profile=await currentProfile();
   const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await currentMembership():null;
   if(!opts.force&&shouldDeferAutoSync())return;
   const [serverEvaluations,serverEvents]=await Promise.all([
@@ -379,7 +447,9 @@ async function syncNow(dbArg,opts={}){
   // A local edit occurred while this sync was in flight. Do not let the
   // older server snapshot overwrite that newer local change. Run again
   // after the current sync finishes using the latest local database.
+  if(session()?.user?.id!==syncUserId)throw new Error('Account changed during synchronization.');
   if(changeGeneration!==startedGeneration){
+   if(opts.requireFresh)throw new Error('Local data changed during synchronization. Retry the export.');
    rerunAfterBusy=true;
    return;
   }
@@ -389,12 +459,13 @@ async function syncNow(dbArg,opts={}){
   m.lastError=null;
   m.lastSyncAt=Date.now();
   m.dataEpoch=completedEpoch;
+  m.userId=syncUserId;
   writeMeta(m);
   window.dispatchEvent(new CustomEvent('fieldready:remote-db',{detail:{db:remote}}));
  }
  catch(e){const m=readMeta();m.lastError=e?.message||String(e);writeMeta(m);throw e;}
  finally{
-  busy=false;
+  busy=false;activeSyncUser=null;
   renderStatus();
   if(rerunAfterBusy){
    rerunAfterBusy=false;
@@ -435,9 +506,12 @@ function init(opts={}){
  renderStatus();
  window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token&&!shouldDeferAutoSync())syncNow().catch(()=>{});});
  window.addEventListener('offline',renderStatus);
+ const refresh=()=>{if(configured()&&navigator.onLine&&session()?.access_token&&!busy&&!shouldDeferAutoSync())syncNow().catch(()=>{});};
+ window.addEventListener('focus',refresh);
+ if(typeof setInterval==='function')setInterval(refresh,30000);
 }
 window.FieldReadySync=Object.freeze({
- init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
+ cachedUserId,captureBaseline,init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,dataEpoch,
  approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
  syncNow,noteLocalChange,pauseAutoSync,resumeAutoSync

@@ -3,7 +3,7 @@ import re, sys, subprocess, json, tempfile
 
 root=Path(__file__).resolve().parents[1]
 errors=[]
-required=['study.js','index.html','styles.css','version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','manifest.webmanifest','sw.js','README.md','DATA_DICTIONARY.md','VALIDATION.md','SOURCE_MAPPING.md','PAGE4_FAILURE_WORKFLOW.md','.nojekyll','assets/icon.svg']
+required=['raps-skills.js','study.js','index.html','styles.css','version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','manifest.webmanifest','sw.js','README.md','DATA_DICTIONARY.md','VALIDATION.md','SOURCE_MAPPING.md','PAGE4_FAILURE_WORKFLOW.md','.nojekyll','assets/icon.svg']
 for f in required:
     if not (root/f).exists(): errors.append(f'Missing {f}')
 
@@ -171,9 +171,9 @@ if '_syncDirtyEvent' not in app or '_syncDirtyEvent' not in sync:
     errors.append('Manager event edits must be tracked so unchanged server events are not rewritten')
 if "managerPushScope(x,profile,membership,serverEvents,userId)" not in sync:
     errors.append('Manager sync must distinguish existing server events from new local events')
-if 'insertRows(CFG.tables.events,newEvents)' not in sync:
+if 'await insertRows(plan.table,plan.inserts)' not in sync:
     errors.append('Event sync must use plain INSERT for new events')
-if 'patchRowsById(CFG.tables.events,changedEvents)' not in sync:
+if "'&server_revision=eq.'" not in sync or "method:'PATCH'" not in sync:
     errors.append('Event sync must PATCH existing edited events by id')
 if "upsert(CFG.tables.events" in sync:
     errors.append('fr_events must never use generic upsert under hardened RLS')
@@ -241,7 +241,7 @@ for marker in ["insert into public.fr_event_evaluators(event_id,user_id)","p.rol
         errors.append(f'Evaluator assignment-only migration missing {marker}')
 
 # JS syntax checks.
-for f in ['study.js','version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
+for f in ['raps-skills.js','study.js','version.js','access-config.js','backend-config.js','locations.js','skills.js','sync.js','app.js','sw.js']:
     try:
         p=subprocess.run(['node','--check',str(root/f)],capture_output=True,text=True)
         if p.returncode: errors.append(f'JS syntax {f}: {p.stderr.strip()}')

@@ -15,7 +15,7 @@
 - `homeInstallationId`, `homeInstallationName` — participant/event home installation context
 - `unit` — organization/unit
 - `trainingLocation` — physical training/evaluation location
-- `skillId` — `TQ`, `NPA`, `NDC`, `BLOOD`, or `CMC`
+- `skillId` — `TQ`, `NPA`, `NDC`, `BLOOD`, `CMC`, `ASM`, `CLS`, or `CPP`
 - `scenarioVersion` — approved scenario/version
 - `leadEvaluator`, `evaluatorId` — evaluator metadata
 
@@ -91,3 +91,7 @@ Exports include the assessment-stopwatch duration in seconds and preserve event/
 - `evaluation.assessment`: `phase` (`baseline`, `pre`, `post`, `practice`, `retest`, or historical `unclassified`) and actual `date`. Missing metadata is not inferred.
 
 See `STUDY_WORKFLOW.md` for analysis eligibility, export meanings, and remaining study activation requirements.
+
+## Device synchronization metadata
+
+Local `_serverRevision` and `_syncBaseline` fields record the server version and normalized last-pulled payload used for conflict detection. They are excluded from server participant/evaluation/event payloads and study CSVs. JSON backups may retain them for pending-work recovery. Only changed records are written. Existing records require a matching server revision in a conditional PATCH; a zero-row update is a conflict, not a successful save.

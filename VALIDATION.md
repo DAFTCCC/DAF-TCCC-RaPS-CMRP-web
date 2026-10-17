@@ -58,3 +58,11 @@ A successful software test does not replace clinical/source approval. The PI/AI 
 See `STUDY_WORKFLOW.md` for the enrollment, separate pre/post assessment events, exposure recording, export, and legacy-data rules. The study regression suite exercises paired comparisons, duplicate handling, arm conflicts, source and scenario comparability, dates, and exposure deduplication. These tests do not establish clinical validity or database enforcement of enrollment uniqueness.
 
 For the study UI smoke check, with Python Playwright and `/usr/bin/chromium` available, run `python3 tests/study_browser.py`. It starts a temporary local server, uses synthetic records and mocked authentication, checks separate pre/post baseline changes, saves an exposure, and validates the study CSV column alignment. It makes no production backend writes.
+
+## Roles, RaPS modules, and multi-device data
+
+Run `node --test tests/*.cjs` for pinned ASM/CLS/CPP source parity, timer conversion, role write scopes, unauthorized profile rejection, token refresh, separate-device updates, version conflicts, voided-attempt preservation, and refreshed-export preconditions.
+
+Run `python3 tests/roles_browser.py` for all four roles: visible management controls, Program/MAJCOM form scopes, all ASM/CLS/CPP sections, finalized sign-off locking, refreshed event CSVs, and aligned export columns. It uses synthetic data and mocked authentication and makes no production writes. The evaluator case uses a mobile viewport. `python3 tests/study_browser.py` checks longitudinal comparisons and study exports. `python3 tests/warning_browser.py` explicitly overrides access mode to test the retained local-testing option; it does not reflect the deployed default.
+
+Apply migration 012 and run a real two-device acceptance exercise in staging: create and assign an event as a manager, grade/finalize it as an assigned evaluator, refresh on another authorized device, and compare exports. Attempt a same-row concurrent edit and verify that the conflict preserves both copies for reconciliation. Client tests do not validate live RLS policies or migration application. Live read-only checks confirmed backend health and zero event rows visible with the public anonymous role.

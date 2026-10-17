@@ -1,4 +1,4 @@
-const CACHE='fieldready-study-v4.3.3-warning1';
+const CACHE='fieldready-study-v4.4.0';
 
 const ASSETS=[
   './',
@@ -9,6 +9,7 @@ const ASSETS=[
   './backend-config.js',
   './locations.js',
   './skills.js',
+  './raps-skills.js',
   './sync.js',
   './app.js',
   './study.js',

@@ -27,7 +27,7 @@ create table if not exists public.fr_events (
   study_arm text check (study_arm in ('Control','Frequency-Based','Deliberate Practice')),
   majcom text,
   home_installation_id text,
-  skill_id text not null check (skill_id in ('TQ','NPA','NDC','BLOOD','CMC')),
+  skill_id text not null check (skill_id in ('TQ','NPA','NDC','BLOOD','CMC','ASM','CLS','CPP')),
   payload jsonb not null default '{}'::jsonb,
   created_by uuid not null default auth.uid(),
   created_at timestamptz not null default now(),

@@ -14,6 +14,7 @@ try:
   page.on('pageerror',lambda e:errors.append(str(e)))
   def block(route):
    backend.append(route.request.url);route.abort()
+  page.route('**/access-config.js',lambda route:route.fulfill(status=200,content_type='application/javascript',body="window.FIELDREADY_ACCESS={mode:'warning-only'};"))
   page.route('https://raps-supabase.asuscomm.com/**',block)
   original=json.dumps({'events':[{'id':'private-existing-study-record','participants':[]}]})
   page.add_init_script('localStorage.setItem("FIELDREADY_LONGITUDINAL_STUDY_V4",'+json.dumps(original)+');')

@@ -314,7 +314,7 @@ function scoring(ev=getEval(),s=skill()){
 function finalizable(ev=getEval(),s=skill()){
  const score=scoring(ev,s);
  const activeTimerDefs=(s?.timers||[]).filter(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.voided&&!x.wallStop&&(x.running||x.paused||timerNeedsRecovery(x)));});
- const timerPassMissing=(s?.timers||[]).filter(d=>d.linkedItemId&&ev?.ratings?.[d.linkedItemId]==='pass'&&timerAggregateStatus(d,ev)!=='met');
+ const timerPassMissing=(s?.timers||[]).filter(d=>d.requiredForPass!==false&&d.linkedItemId&&ev?.ratings?.[d.linkedItemId]==='pass'&&timerAggregateStatus(d,ev)!=='met');
  const stopwatchRecovery=!!ev?.stopwatch?.recoveryRequired;
  const running=!!ev?.stopwatch?.running||activeTimerDefs.length>0;
  const stopwatchReady=!s?.stopwatch?.requiredForFinalization||!!ev?.stopwatch?.completed;
@@ -382,8 +382,8 @@ function renderLongitudinalRecord(){const rows=recordRows();if(!rows.length)retu
 document.querySelectorAll('[data-open-measure]').forEach(b=>b.onclick=()=>{const [eid,pid]=b.dataset.openMeasure.split('|');currentEventId=eid;currentParticipantId=pid;currentSection=0;renderEvaluation();});
  const filters=[['all','All criteria'],['fail','Any failure'],['changed','Changed over time'],['critical','Critical only']];$('recordFilterRow').innerHTML=filters.map(([v,l])=>`<button class="btn ${recordCriterionFilter===v?'primary':'ghost'}" data-record-filter="${v}">${l}</button>`).join('');document.querySelectorAll('[data-record-filter]').forEach(b=>b.onclick=()=>{recordCriterionFilter=b.dataset.recordFilter;renderLongitudinalRecord();});
  let items=itemsForSkill(s);items=items.filter(i=>{const vals=times.map(t=>picked[t]?.ev?.ratings?.[i.id]||'');if(recordCriterionFilter==='fail')return vals.includes('fail');if(recordCriterionFilter==='critical')return i.critical;if(recordCriterionFilter==='changed'){const v=vals.filter(Boolean);return v.length>1&&new Set(v).size>1;}return true;});
- $('criterionComparison').innerHTML=items.length?`<table class="dataTable comparisonTable"><thead><tr><th>Criterion</th>${times.map(t=>`<th>${t==='baseline'?'Baseline':t==='3-month'?'3-Month':'6-Month'}</th>`).join('')}</tr></thead><tbody>${items.map(i=>`<tr><td><b>${esc(i.id)}</b>${i.critical?' <span class="critBadge">CRITICAL</span>':''}<div class="tiny">${esc(i.text)}</div></td>${times.map(t=>{const ev=picked[t]?.ev,r=ev?.ratings?.[i.id]||'',d=ev?.failureDetails?.[i.id];return `<td><span class="compareRating ${ratingClass(r)}">${ratingLabel(r)}</span>${r==='fail'&&d?`<div class="tiny">${esc(d.modeLabel||'')}<br>${esc(d.contributorLabel||'')}</div>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody></table>`:'<div class="empty">No criteria match this comparison filter.</div>';
- $('exportRecordBtn').onclick=exportLongitudinalRecord;
+ $('criterionComparison').innerHTML=items.length?`<table class="dataTable comparisonTable"><thead><tr><th>Criterion</th>${times.map(t=>`<th>${t==='baseline'?'Baseline':t==='3-month'?'3-Month':'6-Month'}</th>`).join('')}</tr></thead><tbody>${items.map(i=>`<tr><td><b>${esc(i.id)}</b>${i.critical?' <span class="critBadge">CRITICAL</span>':''}${i.provenance==='daf'?' <span class="status">DAF Supplemental</span>':''}<div class="tiny">${esc(i.text)}</div></td>${times.map(t=>{const ev=picked[t]?.ev,r=ev?.ratings?.[i.id]||'',d=ev?.failureDetails?.[i.id];return `<td><span class="compareRating ${ratingClass(r)}">${ratingLabel(r)}</span>${r==='fail'&&d?`<div class="tiny">${esc(d.modeLabel||'')}<br>${esc(d.contributorLabel||'')}</div>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody></table>`:'<div class="empty">No criteria match this comparison filter.</div>';
+ $('exportRecordBtn').onclick=()=>refreshForExport(exportLongitudinalRecord);
 }
 function exportLongitudinalRecord(){const rows=recordRows(),headers=['participant_id','skill_id','timepoint','date','event','study_arm','majcom','installation','final_result','score_percent','critical_fail_count','assessment_stopwatch_seconds','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor'];const out=[headers];rows.filter(r=>r.ev).forEach(r=>{const sc=scoring(r.ev,r.s);itemsForSkill(r.s).forEach(i=>{const d=r.ev.failureDetails?.[i.id]||{};out.push([r.p.participantId,r.e.skillId,r.e.timepoint,r.e.date,r.e.name,r.e.studyArm,r.e.majcom,eventHomeName(r.e),r.ev.finalResult||'',sc.percent==null?'':(sc.percent*100).toFixed(1),sc.criticalFail,r.ev.stopwatch?.completed?Math.round((r.ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.text,i.critical?'Y':'N',r.ev.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'']);});});download(`FieldReady_${safeName(rows[0]?.p.participantId||'Participant')}_Longitudinal.csv`,out.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
 function renderStudyRecord(rows){
@@ -392,7 +392,7 @@ function renderStudyRecord(rows){
  $('studyRecord').innerHTML=`<h3>Study enrollment</h3><p>${en.issue?esc(en.issue):`${esc(value.arm)} · enrolled ${esc(value.enrolledDate)} · initial training ${esc(value.trainingDate)}`}</p><div class="actionsRow"><button id="enrollParticipant" class="btn ghost">${value?'View enrollment':'Record enrollment'}</button><button id="addExposure" class="btn ghost">Record training exposure</button><button id="exportStudy" class="btn ghost">Export study records</button></div><h3>Dated training exposures</h3>${exposures.length?`<table class="dataTable"><thead><tr><th>Date</th><th>Skill</th><th>Type</th><th>Minutes</th><th>Repetitions</th><th>Coaching</th><th>Trials to mastery</th></tr></thead><tbody>${exposures.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.skillId)}</td><td>${esc(x.type)}</td><td>${esc(x.minutes)}</td><td>${esc(x.repetitions)}</td><td>${esc(x.coachingEvents)}</td><td>${esc(x.trialsToMastery??'Not measured')}</td></tr>`).join('')}</tbody></table>`:'<p>No dated exposures recorded. Legacy aggregate exposure counts have not been converted into dated sessions.</p>'}<h3>All recorded assessments</h3><p>Unclassified and duplicate records remain preserved; no latest-attempt substitution is made.</p><table class="dataTable"><thead><tr><th>Skill</th><th>Timepoint</th><th>Type</th><th>Actual date</th><th>Status</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.e.skillId)}</td><td>${esc(r.e.timepoint)}</td><td>${esc(STUDY.phases[r.ev?.assessment?.phase]||'Unclassified')}</td><td>${esc(r.ev?.assessment?.date||'Not recorded')}</td><td>${esc(r.ev?.finalizedAt?r.ev.finalResult:r.ev?'In progress':'Not started')}</td></tr>`).join('')}</tbody></table>`;
  $('enrollParticipant').onclick=()=>showEnrollment(rows);
  $('addExposure').onclick=()=>showExposure(rows);
- $('exportStudy').onclick=()=>exportStudyRecords(rows);
+ $('exportStudy').onclick=()=>refreshForExport(()=>exportStudyRecords(recordRows()));
 }
 function showEnrollment(rows){
  const found=STUDY.enrollment(rows);
@@ -419,8 +419,8 @@ function exportStudyRecords(rows){
 function renderAssessmentContext(){
  const ev=getEval(),e=event();
  const allowed=e.timepoint==='baseline'?['unclassified','baseline','retest','practice']:['unclassified','pre','post','retest','practice'];
- $('assessmentContext').innerHTML=`<h3>Assessment identity</h3><p>Classify the actual encounter. Baseline records measured performance after initial training; it does not assume a perfect score.</p><div class="formGrid"><label><span>Assessment type</span><select id="assessmentPhase" ${ev.finalizedAt?'disabled':''}>${[...new Set([...allowed,...(ev.assessment?.phase?[ev.assessment.phase]:[])])].map(k=>`<option value="${esc(k)}" ${ev.assessment?.phase===k?'selected':''}>${esc(STUDY.phases[k]||k)}</option>`).join('')}</select></label><label><span>Actual assessment date</span><input id="assessmentDate" type="date" value="${esc(ev.assessment?.date||'')}" ${ev.finalizedAt?'disabled':''}></label></div>${ev.finalizedAt&&!ev.assessment?'<p>This historical record is unclassified. Its finalized contents have been preserved.</p>':''}`;
- const update=()=>{if(ev.finalizedAt)return;ev.assessment={phase:$('assessmentPhase').value,date:$('assessmentDate').value};saveDb();};
+ $('assessmentContext').innerHTML=`<h3>Assessment identity</h3><p>Classify the actual encounter. Baseline records measured performance after initial training; it does not assume a perfect score.</p><div class="formGrid"><label><span>Assessment type</span><select id="assessmentPhase" ${ev.finalizedAt||eventClosed()?'disabled':''}>${[...new Set([...allowed,...(ev.assessment?.phase?[ev.assessment.phase]:[])])].map(k=>`<option value="${esc(k)}" ${ev.assessment?.phase===k?'selected':''}>${esc(STUDY.phases[k]||k)}</option>`).join('')}</select></label><label><span>Actual assessment date</span><input id="assessmentDate" type="date" value="${esc(ev.assessment?.date||'')}" ${ev.finalizedAt||eventClosed()?'disabled':''}></label></div>${ev.finalizedAt&&!ev.assessment?'<p>This historical record is unclassified. Its finalized contents have been preserved.</p>':''}`;
+ const update=()=>{if(ev.finalizedAt||eventClosed())return;ev.assessment={phase:$('assessmentPhase').value,date:$('assessmentDate').value};saveDb();};
  $('assessmentPhase').onchange=update;$('assessmentDate').onchange=update;
 }
 
@@ -560,14 +560,14 @@ function openEvaluation(pid){
   SYNC?.pauseAutoSync?.();
   p.evaluation=makeEvaluation(e);
   saveDb();
- }else if(!p.evaluation.finalizedAt){
+ }else if(!p.evaluation.finalizedAt&&!eventClosed(e)){
   gradingSyncLocked=true;
   SYNC?.pauseAutoSync?.();
  }
  currentSection=0;
  renderEvaluation();
 }
-function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderAssessmentContext();renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();requestEvalWakeLock();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
+function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt&&!eventClosed(e)){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';['evalName','evalId','overallNotes'].forEach(id=>$(id).disabled=!!ev.finalizedAt||eventClosed(e));$('reviewFinalizeBtn').disabled=!!ev.finalizedAt||eventClosed(e);$('voidAttemptBtn').disabled=!!ev.finalizedAt||eventClosed(e);$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderAssessmentContext();renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();requestEvalWakeLock();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
 function renderEvalKpis(){const st=scoring();$('scoreKpi').textContent=st.percent==null?'—':`${(st.percent*100).toFixed(1)}%`;$('critKpi').textContent=st.criticalFail;$('unresolvedKpi').textContent=st.unresolved;}
 function stopwatchElapsed(sw,at=now(),monoAt=monoNow()){
  if(!sw)return 0;
@@ -579,18 +579,18 @@ function renderStopwatch(tickOnly=false){
  const s=skill(),ev=getEval();if(!s||!ev)return;
  const def=s.stopwatch||{label:'Assessment Stopwatch'},sw=ev.stopwatch=normalizeStopwatch(ev.stopwatch),ms=stopwatchElapsed(sw),valid=sw.completed?timerValidity(def,ms):null;
  const standard=def.standard||'',state=sw.recoveryRequired?'RECOVERY REQUIRED — RESET AND RESTART':sw.running?'RUNNING':sw.completed?'RECORDED':'READY';
- $('assessmentStopwatch').innerHTML=`<div class="stopwatchCard ${sw.recoveryRequired?'fail':valid===false?'fail':valid===true&&def.requiredForPass?'ok':''}"><div><small>ASSESSMENT STOPWATCH</small><h3>${esc(def.label||'Assessment Stopwatch')}</h3><span class="tiny">${esc(standard)}${standard?' · ':''}${esc(state)}</span></div><div class="stopwatchValue">${sw.recoveryRequired?'--:--':fmtMs(ms)}</div><div class="stopwatchActions">${!ev.finalizedAt?`${!sw.recoveryRequired&&(sw.running||!sw.completed)?`<button class="btn ${sw.running?'danger':'primary'}" id="stopwatchToggle">${esc(sw.running?(def.stopLabel||'STOP'):(def.startLabel||'START'))}</button>`:''}<button class="btn ghost" id="stopwatchReset">${sw.recoveryRequired?'RESET / RESTART':'Reset'}</button>`:''}</div></div>`;
+ $('assessmentStopwatch').innerHTML=`<div class="stopwatchCard ${sw.recoveryRequired?'fail':valid===false?'fail':valid===true&&def.requiredForPass?'ok':''}"><div><small>ASSESSMENT STOPWATCH</small><h3>${esc(def.label||'Assessment Stopwatch')}</h3><span class="tiny">${esc(standard)}${standard?' · ':''}${esc(state)}</span></div><div class="stopwatchValue">${sw.recoveryRequired?'--:--':fmtMs(ms)}</div><div class="stopwatchActions">${!ev.finalizedAt&&!eventClosed()?`${!sw.recoveryRequired&&(sw.running||!sw.completed)?`<button class="btn ${sw.running?'danger':'primary'}" id="stopwatchToggle">${esc(sw.running?(def.stopLabel||'STOP'):(def.startLabel||'START'))}</button>`:''}<button class="btn ghost" id="stopwatchReset">${sw.recoveryRequired?'RESET / RESTART':'Reset'}</button>`:''}</div></div>`;
  const tog=$('stopwatchToggle');if(tog)tog.onclick=toggleStopwatch;const rst=$('stopwatchReset');if(rst)rst.onclick=resetStopwatch;
 }
 function toggleStopwatch(){
- const ev=getEval();if(!ev||ev.finalizedAt)return;const sw=ev.stopwatch=normalizeStopwatch(ev.stopwatch),at=now(),monoAt=monoNow();
+ const ev=getEval();if(!ev||ev.finalizedAt||eventClosed())return;const sw=ev.stopwatch=normalizeStopwatch(ev.stopwatch),at=now(),monoAt=monoNow();
  if(sw.recoveryRequired){alert('This assessment clock was active when FieldReady reloaded. Timing integrity cannot be reconstructed. Reset the clock and restart the formal assessment timing.');return;}
  if(!sw.running&&!sw.completed){sw.running=true;sw.startedAt=at;sw.startedMono=monoAt;sw.runtimeId=RUNTIME_ID;}
  else if(sw.running){sw.elapsedMs=stopwatchElapsed(sw,at,monoAt);sw.running=false;sw.startedAt=null;sw.startedMono=null;sw.completed=true;sw.stoppedAt=at;}
  saveDb();renderStopwatch();renderEvalKpis();
 }
 function resetStopwatch(){
- const ev=getEval();if(!ev||ev.finalizedAt)return;
+ const ev=getEval();if(!ev||ev.finalizedAt||eventClosed())return;
  const sw=normalizeStopwatch(ev.stopwatch);
  const msg=sw.recoveryRequired?'Reset the interrupted assessment clock? The recovered timing value will be discarded and the assessment clock must be restarted.':'Reset the assessment stopwatch? This removes the recorded assessment duration for this in-progress evaluation.';
  if(!confirm(msg))return;ev.stopwatch=normalizeStopwatch(null);saveDb();renderStopwatch();renderEvalKpis();
@@ -646,7 +646,7 @@ function timerAggregateStatus(def,ev=getEval()){
  return statuses.every(x=>x==='met')?'met':'incomplete';
 }
 function timerAction(id,act){
- const ev=getEval(),def=(skill()?.timers||[]).find(t=>t.id===id);if(!ev||!def||ev.finalizedAt)return;
+ const ev=getEval(),def=(skill()?.timers||[]).find(t=>t.id===id);if(!ev||!def||ev.finalizedAt||eventClosed())return;
  let x=currentTimerInstance(id,ev),at=now(),monoAt=monoNow();
  if(x&&timerNeedsRecovery(x)&&act!=='void'){alert('This timer was active when FieldReady reloaded. For timing integrity it cannot be resumed or stopped. VOID this instance with a reason, then start a new timer instance.');return;}
  if(act==='start'){
@@ -689,7 +689,7 @@ function timerCardMarkup(def,ev=getEval(),inline=false){
   ?`<button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`
   :`<button class="btn ghost timerControl" data-timer-act="pause" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>PAUSE</button><button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`;
  const history=store.instances.filter(z=>z.wallStart).map(z=>`<div class="timerHistoryRow"><span>#${z.index}${z.voided?' VOID':''}</span><span>${z.voided?esc(z.voidReason):`${fmtMs(timerDuration(def,z,z.wallStop||now()))} · ${rawTimerResult(def,z,z.wallStop||now()).toUpperCase()}`}</span></div>`).join('');
- return `<div class="timerCard ${inline?'inlineTimerCard ':''}${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}" data-inline-timer-card="${def.id}"><header><b>${inline?'TIMED CRITERION · ':''}${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue" data-inline-timer-display="${def.id}">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt?`<button class="btn primary timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn danger timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b data-inline-timer-status="${def.id}">${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
+ return `<div class="timerCard ${inline?'inlineTimerCard ':''}${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}" data-inline-timer-card="${def.id}"><header><b>${inline?'TIMED CRITERION · ':''}${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue" data-inline-timer-display="${def.id}">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt&&!eventClosed()?`<button class="btn primary timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn danger timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b data-inline-timer-status="${def.id}">${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
 }
 function bindTimerControls(root=document){
  root.querySelectorAll('[data-timer-act]').forEach(b=>b.onclick=()=>timerAction(b.dataset.timerId,b.dataset.timerAct));
@@ -741,19 +741,19 @@ function safeBackFromEvaluation(){
  renderEvent();
 }
 function renderCriteria(){
- const s=skill(),ev=getEval(),sec=s.sections[currentSection];const locked=!!ev.finalizedAt;
+ const s=skill(),ev=getEval(),sec=s.sections[currentSection];const locked=!!ev.finalizedAt||eventClosed();
  $('criteriaList').innerHTML=sec.items.map(i=>{
   const r=ev.ratings[i.id]||'',d=ev.failureDetails[i.id],linked=(s.timers||[]).filter(t=>t.linkedItemId===i.id);
   const linkedTimers=linked.length?`<div class="criterionTimers">${linked.map(t=>timerCardMarkup(t,ev,true)).join('')}</div>`:'';
-  return `<div class="criterion ${i.critical?'critical ':''}${r}" id="crit-${i.id}"><div><div class="criterionCode">${esc(i.id)}${i.critical?'<span class="critBadge">CRITICAL</span>':''}${linked.length?'<span class="timerLinkedBadge">TIMED</span>':''}</div><p>${esc(i.text)}</p></div><div class="ratingBtns">${['pass','fail','nt','no'].map(v=>{const lab=v==='pass'?'PASS':v==='fail'?'FAIL':v==='nt'?'NT':'N/O';const disabled=locked||(v==='nt'&&i.critical);return `<button class="ratingBtn ${v} ${r===v?'active':''}" data-rate="${v}" data-item="${i.id}" ${disabled?'disabled':''}>${lab}</button>`;}).join('')}</div>${linkedTimers}${r==='fail'&&d?`<div class="failureDetail"><b>${esc(d.modeLabel)}</b> → ${esc(d.contributorLabel)}${d.comment?` · ${esc(d.comment)}`:''}</div>`:''}</div>`;
+  return `<div class="criterion ${i.critical?'critical ':''}${r}" id="crit-${i.id}"><div><div class="criterionCode">${esc(i.id)}${i.critical?'<span class="critBadge">CRITICAL</span>':''}${i.provenance==='daf'?'<span class="status">DAF Supplemental</span>':''}${linked.length?'<span class="timerLinkedBadge">TIMED</span>':''}</div><p>${esc(i.text)}</p></div><div class="ratingBtns">${['pass','fail','nt','no'].map(v=>{const lab=v==='pass'?'PASS':v==='fail'?'FAIL':v==='nt'?'NT':'N/O';const disabled=locked||(v==='nt'&&i.critical);return `<button class="ratingBtn ${v} ${r===v?'active':''}" data-rate="${v}" data-item="${i.id}" ${disabled?'disabled':''}>${lab}</button>`;}).join('')}</div>${linkedTimers}${r==='fail'&&d?`<div class="failureDetail"><b>${esc(d.modeLabel)}</b> → ${esc(d.contributorLabel)}${d.comment?` · ${esc(d.comment)}`:''}</div>`:''}</div>`;
  }).join('');
  document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>setRating(b.dataset.item,b.dataset.rate));
  bindTimerControls($('criteriaList'));
  $('prevSectionBtn').disabled=currentSection===0;$('nextSectionBtn').disabled=currentSection===s.sections.length-1;
 }
-function setRating(id,rating){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||!i)return;if(rating==='fail')return beginFailureClassification(id);if(rating==='nt'&&i.critical){alert('Critical criteria cannot be marked NT.');return;}if(rating==='nt')return requestNt(id);ev.ratings[id]=rating;if(rating!=='fail')delete ev.failureDetails[id];saveDb();renderCriteria();renderEvalKpis();}
+function setRating(id,rating){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||eventClosed()||!i)return;if(rating==='fail')return beginFailureClassification(id);if(rating==='nt'&&i.critical){alert('Critical criteria cannot be marked NT.');return;}if(rating==='nt')return requestNt(id);ev.ratings[id]=rating;if(rating!=='fail')delete ev.failureDetails[id];saveDb();renderCriteria();renderEvalKpis();}
 function requestNt(id){openModal('Not Tested — scenario did not elicit criterion',`<p>NT may be used only for a <b>noncritical criterion</b> that the approved scenario did not elicit. It may not excuse an observed error or omission.</p><form id="ntForm"><div class="formGrid"><label class="full"><span>Objective scenario note (optional)</span><textarea name="detail" rows="3" placeholder="Briefly document why the approved scenario did not elicit this criterion"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Apply NT</button></div></form>`);$('ntForm').onsubmit=e=>{e.preventDefault();const ev=getEval();ev.ratings[id]='nt';ev.ntReasons[id]={code:'scenario-not-elicited',label:'Approved scenario did not elicit criterion',detail:new FormData(e.target).get('detail')||'',at:now()};delete ev.failureDetails[id];saveDb();closeModal();renderCriteria();renderEvalKpis();};}
-function beginFailureClassification(id,opts={}){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||!i)return;const prior=ev.failureDetails[id]||{};chooseFailureMode(id,opts.forcedMode||prior.mode||'');}
+function beginFailureClassification(id,opts={}){const ev=getEval(),i=itemById(id);if(!ev||ev.finalizedAt||eventClosed()||!i)return;const prior=ev.failureDetails[id]||{};chooseFailureMode(id,opts.forcedMode||prior.mode||'');}
 function chooseFailureMode(id,selected=''){
  openModal(`FAIL — ${id}`,`<div class="progressSteps">Step 1 of 2 · Failure mode</div><p>Select <b>one</b> observed failure mode. Exactly five live choices are available.</p><div class="choiceGrid">${FAILURE_MODES.map(x=>`<button class="choiceBtn" type="button" data-mode="${x.id}"><b>${esc(x.label)}</b><span>${esc(x.desc)}</span></button>`).join('')}</div>`);
  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>chooseContributor(id,b.dataset.mode));
@@ -764,6 +764,7 @@ function chooseContributor(id,mode){
 function failureCommentStep(id,mode,contributor){const m=FAILURE_MODES.find(x=>x.id===mode),c=CONTRIBUTORS.find(x=>x.id===contributor),required=mode==='other-unclear';openModal(`Record FAIL — ${id}`,`<div class="reviewBox"><b>${esc(m.label)}</b><br>${esc(c.label)}</div><form id="failureSaveForm"><div class="formGrid"><label class="full"><span>Objective evaluator comment ${required?'*':'(optional)'}</span><textarea name="comment" rows="3" ${required?'required':''} placeholder="Document concise observable facts; avoid speculative labels"></textarea></label></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Record FAIL</button></div></form>`);$('failureSaveForm').onsubmit=e=>{e.preventDefault();const comment=String(new FormData(e.target).get('comment')||'').trim();if(required&&!comment){alert('Other / unclear requires a brief objective comment.');return;}const ev=getEval();ev.ratings[id]='fail';ev.failureDetails[id]={mode,modeLabel:m.label,contributor,contributorLabel:c.label,comment,at:now()};saveDb();closeModal();renderCriteria();renderEvalKpis();};}
 function nextUnresolved(){const ev=getEval(),s=skill();const items=allItems(s);const start=items.findIndex(i=>s.sections[currentSection].items.some(x=>x.id===i.id));const ordered=items.slice(start).concat(items.slice(0,start));const hit=ordered.find(i=>{const r=ev.ratings[i.id],d=ev.failureDetails[i.id];return !r||r==='no'||(i.critical&&r==='nt')||(r==='fail'&&(!d?.mode||!d?.contributor||(d.mode==='other-unclear'&&!d.comment)));});if(!hit){toast('No unresolved criteria.');return;}currentSection=s.sections.findIndex(sec=>sec.items.some(i=>i.id===hit.id));renderCriteria();$('sectionSelect').value=String(currentSection);setTimeout(()=>document.getElementById(`crit-${hit.id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),0);}
 function reviewFinalize(){
+ if(getEval()?.finalizedAt||eventClosed())return;
  const ev=getEval(),s=skill(),fin=finalizable(ev,s),st=fin.score;
  if(!ev.assessment||!STUDY.validDate(ev.assessment.date)||!Object.hasOwn(STUDY.phases,ev.assessment.phase)||ev.assessment.phase==='unclassified'){alert('Record the assessment type and actual date before finalizing.');return;}
  if(!fin.ok){
@@ -800,12 +801,32 @@ function reviewFinalize(){
   try{if(!WARNING_ONLY)await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
  };
 }
-function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
+function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt||eventClosed()){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
 
-function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',BUILD.versionName]);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
+function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version','roster_record_id','evaluation_id','assessment_type','assessment_date','enrollment_id','assigned_arm','initial_training_date','scenario_version'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,ev?.skillSource||s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',ev?.appVersion||BUILD.versionName,p.id,ev?.id||'',ev?.assessment?.phase||'unclassified',ev?.assessment?.date||'',p.enrollment?.id||'',p.enrollment?.arm||'',p.enrollment?.trainingDate||'',ev?.scenarioVersion||e.scenarioVersion||'']);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
 function eventCsvFileName(e=event()){return `FieldReady_${safeName(e.name)}_${e.date}_${String(e.id).slice(0,8)}.csv`;}
+async function refreshForExport(action){
+ try{
+  if(!WARNING_ONLY)await SYNC.syncNow(undefined,{requireFresh:true});
+  action();
+ }catch(ex){alert('Export paused: '+(ex?.message||ex));}
+}
 function exportEventCsv(){const e=event();download(eventCsvFileName(e),eventCsvText(e),'text/csv');}
-async function closeEvent(){const e=event();if(!e||eventClosed(e)||!canManageEventLifecycle())return;const unfinished=e.participants.filter(p=>!p.evaluation?.finalizedAt);if(!e.participants.length){alert('A class must contain at least one participant before it can be closed.');return;}if(unfinished.length){alert(`Cannot close class. ${unfinished.length} participant(s) do not have a finalized evaluation.`);return;}if(!confirm('Close this class? The final CSV will be queued for automatic archival on the FieldReady NUC and the class will become read-only.'))return;try{const out=await SYNC.closeEvent(e.id,eventCsvText(e),eventCsvFileName(e));e.closedAt=out?.closed_at?Date.parse(out.closed_at):Date.now();e.closedBy=SYNC.session()?.user?.id||null;e._syncDirtyEvent=false;localStorage.setItem(DB_KEY,JSON.stringify(db));await SYNC.syncNow(db);toast(`Class closed · NUC archive ${out?.archive_month||''}`);renderEvent();renderHomeSilently();}catch(ex){alert('Close class failed: '+(ex?.message||ex));}}
+async function closeEvent(){
+ if(!canManageEventLifecycle())return;
+ try{await SYNC.syncNow(undefined,{requireFresh:true});}catch(ex){alert('Close class paused: '+(ex?.message||ex));return;}
+ const e=event();if(!e||eventClosed(e))return;
+ const unfinished=e.participants.filter(p=>!p.evaluation?.finalizedAt);
+ if(!e.participants.length){alert('A class must contain at least one participant before it can be closed.');return;}
+ if(unfinished.length){alert(`Cannot close class. ${unfinished.length} participant(s) do not have a finalized evaluation.`);return;}
+ if(!confirm('Close this class? The final CSV will be queued for automatic archival on the FieldReady NUC and the class will become read-only.'))return;
+ try{
+  const out=await SYNC.closeEvent(e.id,eventCsvText(e),eventCsvFileName(e));
+  e.closedAt=out?.closed_at?Date.parse(out.closed_at):Date.now();e.closedBy=SYNC.session()?.user?.id||null;e._syncDirtyEvent=false;
+  localStorage.setItem(DB_KEY,JSON.stringify(db));await SYNC.syncNow(db);
+  toast(`Class closed · NUC archive ${out?.archive_month||''}`);renderEvent();renderHomeSilently();
+ }catch(ex){alert('Close class failed: '+(ex?.message||ex));}
+}
 async function deleteEvent(){const e=event();if(!e||!canDeleteEvent())return;if(!confirm(`Delete "${e.name}" from FieldReady? The NUC CSV archive and audit trail will be retained.`))return;try{await SYNC.deleteEvent(e.id);db.events=db.events.filter(x=>x.id!==e.id);localStorage.setItem(DB_KEY,JSON.stringify(db));currentEventId=null;await SYNC.syncNow(db);toast('Class deleted. NUC archive retained.');renderHome();}catch(ex){alert('Delete class failed: '+(ex?.message||ex));}}
 function safeName(s){return String(s||'export').replace(/[^a-z0-9_-]+/gi,'_');}
 function managementSummaryCsv(){const events=scopedEvents(),headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation','skill','participants','finalized','pass','mean_score','critical_fail'];const rows=[headers];events.forEach(e=>{const a=eventAnalytics(e);rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),SKILLS[e.skillId]?.shortName||e.skillId,e.participants.length,a.rows.length,a.pass,a.avg==null?'':(a.avg*100).toFixed(1),a.crit]);});download('FieldReady_Management_Summary.csv',rows.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
@@ -829,6 +850,10 @@ function openSyncPanel(){
   return;
  }
  openModal('FieldReady synchronization',`<div class="reviewBox"><b>${esc(s.label)}</b><p>${esc(s.detail)}</p></div><p>Signed in as <b>${esc(sess.user?.email||'FieldReady user')}</b>.</p><div class="actionsRow"><button id="syncNowBtn" class="btn primary">Sync now</button><button id="syncSignOutBtn" class="btn ghost">Sign out</button></div>`);
+ const testBackup=localStorage.getItem('FIELDREADY_LOCAL_TEST_V1');
+ if(testBackup){$('modalBody').insertAdjacentHTML('beforeend','<button id="testBackupBtn" class="btn ghost">Download local testing backup</button>');$('testBackupBtn').onclick=()=>download('FieldReady_Local_Test_Backup.json',testBackup,'application/json');}
+ const recovery=localStorage.getItem('FIELDREADY_SYNC_RECOVERY_'+sess.user?.id);
+ if(recovery){$('modalBody').insertAdjacentHTML('beforeend','<button id="syncRecoveryBtn" class="btn ghost">Download pending-work recovery backup</button>');$('syncRecoveryBtn').onclick=()=>download('FieldReady_Pending_Work_Recovery.json',recovery,'application/json');}
  $('syncNowBtn').onclick=async()=>{try{await SYNC.syncNow(db);closeModal();toast('FieldReady synchronized.');renderHome();}catch(x){alert('Sync failed: '+(x.message||x));}};
  $('syncSignOutBtn').onclick=async()=>{closeModal();await lockFieldReady();};
 }
@@ -846,6 +871,11 @@ async function loadCurrentAccess(){
  const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await SYNC.currentMembership():null;
  setAccountUi(profile,membership);
  return {profile,membership};
+}
+function canUseOwnCachedData(){const userId=SYNC?.session?.()?.user?.id;return !!userId&&!!currentAccessProfile?.active&&SYNC?.cachedUserId?.()===userId;}
+function enterWithSyncWarning(message){
+ $('safeguard').classList.add('hidden');$('accessPassword').value='';renderHome();
+ openModal('Synchronization needs attention',`<p>${esc(message)}</p><p>Your authorized local work is available. Use Backup to preserve pending changes, then resolve the synchronization error before exporting shared results.</p>`);
 }
 async function unlockFieldReady(){
   const err=$('accessError');
@@ -869,6 +899,7 @@ async function unlockFieldReady(){
     renderHome();
     toast('Signed in and synchronized.');
   }catch(e){
+    if(canUseOwnCachedData()){enterWithSyncWarning(e?.message||'Synchronization failed.');return;}
     err.textContent=e?.message||'Unable to sign in.';
     err.classList.remove('hidden');
     $('accessPassword').select();
@@ -950,8 +981,10 @@ async function restoreAuthorizedSession(){
  try{
   await SYNC.requireAuthorizedProfile();
   await loadCurrentAccess();
+  await SYNC.syncNow(db);
   $('safeguard').classList.add('hidden');
  }catch(e){
+  if(canUseOwnCachedData()){enterWithSyncWarning(e?.message||'Synchronization failed.');return;}
   try{await SYNC.signOut();}catch{}
   setAccountUi(null);
   $('safeguard').classList.remove('hidden');
@@ -967,9 +1000,9 @@ if(WARNING_ONLY){
  document.querySelector('.safeguardCard > p:not(.eyebrow)').textContent='Temporary testing mode: login is disabled. Use synthetic data only. Records stay in this browser and are not synchronized to the study server.';
  setAccountUi(null);syncAccessButton();
 }else handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
-$('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=exportEventCsv;$('closeEventBtn').onclick=closeEvent;$('deleteEventBtn').onclick=deleteEvent;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
-$('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=managementSummaryCsv;$('enterpriseCsvBtn').onclick=enterpriseCsv;
-$('backRosterBtn').onclick=safeBackFromEvaluation;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
+$('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=()=>refreshForExport(exportEventCsv);$('closeEventBtn').onclick=closeEvent;$('deleteEventBtn').onclick=deleteEvent;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
+$('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=()=>refreshForExport(managementSummaryCsv);$('enterpriseCsvBtn').onclick=()=>refreshForExport(enterpriseCsv);
+$('backRosterBtn').onclick=safeBackFromEvaluation;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{if(getEval()?.finalizedAt||eventClosed())return;getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{if(getEval()?.finalizedAt||eventClosed())return;getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{if(getEval()?.finalizedAt||eventClosed())return;getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;
 
 $('syncStatusBtn').onclick=openSyncPanel;
 window.addEventListener('fieldready:remote-db',e=>{
@@ -978,6 +1011,7 @@ window.addEventListener('fieldready:remote-db',e=>{
 
  const activeView=document.querySelector('.view.active')?.id||'homeView';
 
+ SYNC?.captureBaseline?.(remote);
  db=remote;
  localStorage.setItem(DB_KEY,JSON.stringify(db));
 
