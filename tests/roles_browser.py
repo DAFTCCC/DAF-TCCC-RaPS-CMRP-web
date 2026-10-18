@@ -30,6 +30,7 @@ try:
    assert page.locator('#enterBtn').is_disabled()
    page.locator('#accessEmail').fill('test@example.invalid');page.locator('#accessPassword').fill('synthetic');page.locator('#ackCheck').check();page.locator('#enterBtn').click()
    assert not page.locator('#safeguard').is_visible()
+   login_refreshes=page.evaluate('window.exportRefreshes')
    assert page.locator('#newEventBtn').is_visible()==(role!='evaluator')
    assert page.locator('#adminBtn').is_visible()==(role!='evaluator')
    if role!='evaluator':
@@ -66,7 +67,7 @@ try:
    assert page.locator('#reviewFinalizeBtn').is_disabled()
    assert page.locator('#criteriaList [data-rate]:enabled').count()==0
    assert page.locator('#stopwatchToggle').count()==0
-   assert page.evaluate('window.exportRefreshes')==len(tiers)
+   assert page.evaluate('window.exportRefreshes')==login_refreshes+len(tiers)
    assert not errors,errors
    assert not backend,backend
    print('UI PASS:',role,'permissions, all 8 skill modules, finalized/closed locking, refreshed exports')

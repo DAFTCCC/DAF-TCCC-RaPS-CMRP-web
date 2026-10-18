@@ -25,6 +25,34 @@ function harness(fetch,profile={user_id:'test-user',active:true,role:'enterprise
 }
 const response=body=>({ok:true,text:async()=>JSON.stringify(body)});
 
+test('pauseAutoSync suspends reads and writes independently of the UI defer callback',async()=>{
+ let calls=0;
+ const h=harness(async()=>{calls++;return response([]);});
+ h.sync.init({getDb:()=>({events:[]}),shouldDeferAutoSync:()=>false});
+ h.sync.pauseAutoSync();h.sync.noteLocalChange();
+ await h.sync.syncNow();
+ await assert.rejects(h.sync.syncNow(undefined,{requireFresh:true}),/Finish grading/);
+ assert.equal(calls,0);
+ assert.equal(h.sync.status().label,'GRADING · LOCAL');
+ h.sync.resumeAutoSync();
+ assert.equal(h.sync.status().code,'pending');
+ assert.notEqual(h.sync.status().label,'GRADING · LOCAL');
+});
+
+test('a pull started before grading cannot publish its snapshot after pauseAutoSync',async()=>{
+ let epochCalls=0;let h;
+ h=harness(async url=>{
+  if(url.includes('/rpc/fr_get_data_epoch')){
+   if(++epochCalls===2)h.sync.pauseAutoSync();
+   return response('epoch');
+  }
+  return response([]);
+ });
+ h.sync.init({getDb:()=>({events:[]})});
+ await h.sync.syncNow();
+ assert.equal(h.events.length,0);
+});
+
 test('username sign-in uses the public login function and retains the native account identity',async()=>{
  const calls=[];
  const h=harness(async(url,options)=>{

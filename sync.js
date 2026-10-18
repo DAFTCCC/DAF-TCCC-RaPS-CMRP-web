@@ -8,10 +8,12 @@ let timer=null;
 let changeGeneration=0;
 let rerunAfterBusy=false;
 let shouldDeferAutoSync=()=>false;
+let autoSyncPaused=false;
 let activeDataEpoch=null;
 let refreshPromise=null;
 let activeSyncUser=null;
 
+function isSyncDeferred(){return autoSyncPaused||shouldDeferAutoSync();}
 function configured(){return window.FIELDREADY_ACCESS?.mode!=='warning-only'&&!!(CFG.enabled&&CFG.url&&CFG.anonKey&&!CFG.url.includes('FIELDREADY-BACKEND')&&!CFG.anonKey.includes('REPLACE_WITH'));}
 function cachedUserId(){return readMeta().userId||null;}
 function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY))||{pending:0,lastSyncAt:null,lastError:null};}catch{return {pending:0,lastSyncAt:null,lastError:null};}}
@@ -26,7 +28,7 @@ function status(){
  if(!session()?.access_token)return {code:'signin',label:'SIGN IN',detail:'Backend configured; sign in to synchronize.'};
  if(busy)return {code:'syncing',label:'SYNCING…',detail:'Synchronizing with the FieldReady NUC.'};
  if(m.lastError)return {code:'error',label:'SYNC ERROR',detail:m.lastError};
- if(m.pending&&shouldDeferAutoSync())return {code:'pending',label:'GRADING · LOCAL',detail:'Changes are saved locally. Server sync will resume after grading is finalized.'};
+ if(m.pending&&isSyncDeferred())return {code:'pending',label:'GRADING · LOCAL',detail:'Changes are saved locally. Server sync will resume after grading is finalized.'};
  if(m.pending)return {code:'pending',label:'PENDING · '+m.pending,detail:'Local changes are waiting to sync.'};
  if(m.lastSyncAt)return {code:'synced',label:'SYNCED · '+new Date(m.lastSyncAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),detail:'Local and server records reconciled.'};
  return {code:'ready',label:'READY TO SYNC',detail:'Authenticated; no successful sync recorded yet.'};
@@ -80,7 +82,7 @@ async function signIn(identifier,password){
 }
 async function signOut(){
  const old=session();
- clearTimeout(timer);rerunAfterBusy=false;activeDataEpoch=null;setSession(null);
+ clearTimeout(timer);rerunAfterBusy=false;autoSyncPaused=false;activeDataEpoch=null;setSession(null);
  try{if(old?.access_token)await api('/auth/v1/logout',{method:'POST',headers:{Authorization:'Bearer '+old.access_token}});}catch{}
 }
 
@@ -389,7 +391,7 @@ function rebuild(x,fallback){
 }
 async function pull(fallback){const a=await Promise.all([getAll(CFG.tables.events),getAll(CFG.tables.participants),getAll(CFG.tables.evaluations),getAll(CFG.tables.voids)]);return captureBaseline(rebuild({events:a[0],participants:a[1],evaluations:a[2],voids:a[3]},fallback));}
 async function syncNow(dbArg,opts={}){
- if(!opts.force&&shouldDeferAutoSync()){if(opts.requireFresh)throw new Error('Finish grading before refreshing an export. Use Backup to save pending local work.');renderStatus();return;}
+ if(!opts.force&&isSyncDeferred()){if(opts.requireFresh)throw new Error('Finish grading before synchronizing or exporting. Use Backup to save pending local work.');renderStatus();return;}
  if(busy){if(opts.requireFresh)throw new Error('Synchronization is already in progress. Retry the export when it finishes.');rerunAfterBusy=true;return;}
  if(!configured()||!navigator.onLine){if(opts.requireFresh)throw new Error('Connect to the study server before exporting synchronized data. Use Backup for an offline copy.');return;}
 
@@ -399,7 +401,7 @@ async function syncNow(dbArg,opts={}){
  await ensureSession();
  if(busy){if(opts.requireFresh)throw new Error('Synchronization is already in progress. Retry the export.');rerunAfterBusy=true;return;}
  if(!session()?.access_token){if(opts.requireFresh)throw new Error('Sign in before exporting synchronized data.');renderStatus();return;}
- if(!opts.force&&shouldDeferAutoSync()){if(opts.requireFresh)throw new Error('Finish grading before refreshing an export. Use Backup to save pending local work.');renderStatus();return;}
+ if(!opts.force&&isSyncDeferred()){if(opts.requireFresh)throw new Error('Finish grading before synchronizing or exporting. Use Backup to save pending local work.');renderStatus();return;}
 
  busy=true;activeSyncUser=session()?.user?.id;renderStatus();
  const startedGeneration=changeGeneration;
@@ -418,7 +420,7 @@ async function syncNow(dbArg,opts={}){
    const completedEpoch=await dataEpoch();
    if(completedEpoch!==serverEpoch)throw new Error('Server data changed during synchronization. Retry.');
    if(session()?.user?.id!==syncUserId)throw new Error('Account changed during synchronization.');
-   if(shouldDeferAutoSync()){
+   if(!opts.force&&isSyncDeferred()){
     if(opts.requireFresh)throw new Error('Grading started during synchronization. Retry the export after grading.');
     return;
    }
@@ -444,14 +446,14 @@ async function syncNow(dbArg,opts={}){
    :JSON.parse(JSON.stringify(source));
 
   const membership=(profile?.role==='program_manager'||profile?.role==='majcom_manager')?await currentMembership():null;
-  if(!opts.force&&shouldDeferAutoSync())return;
+  if(!opts.force&&isSyncDeferred())return;
   const [serverEvaluations,serverEvents]=await Promise.all([
    getAll(CFG.tables.evaluations),
    getAll(CFG.tables.events)
   ]);
-  if(!opts.force&&shouldDeferAutoSync())return;
+  if(!opts.force&&isSyncDeferred())return;
   await push(db,serverEvaluations,serverEvents,profile,membership);
-  if(!opts.force&&shouldDeferAutoSync())return;
+  if(!opts.force&&isSyncDeferred())return;
   const remote=await pull(db);
 
   const completedEpoch=await dataEpoch();
@@ -483,7 +485,7 @@ async function syncNow(dbArg,opts={}){
   if(rerunAfterBusy){
    rerunAfterBusy=false;
    clearTimeout(timer);
-   if(!shouldDeferAutoSync())timer=setTimeout(()=>syncNow().catch(()=>{}),100);
+   if(!isSyncDeferred())timer=setTimeout(()=>syncNow().catch(()=>{}),100);
   }
  }
 }
@@ -494,12 +496,13 @@ function noteLocalChange(){
  m.lastError=null;
  writeMeta(m);
  if(!configured()||!navigator.onLine||!session()?.access_token)return;
- if(shouldDeferAutoSync()){clearTimeout(timer);renderStatus();return;}
+ if(isSyncDeferred()){clearTimeout(timer);renderStatus();return;}
  if(busy){rerunAfterBusy=true;return;}
  clearTimeout(timer);
  timer=setTimeout(()=>syncNow().catch(()=>{}),CFG.autoSyncDelayMs||1500);
 }
 function pauseAutoSync(){
+ autoSyncPaused=true;
  changeGeneration++;
  rerunAfterBusy=false;
  clearTimeout(timer);
@@ -508,6 +511,8 @@ function pauseAutoSync(){
 }
 function resumeAutoSync(){
  if(shouldDeferAutoSync())return;
+ autoSyncPaused=false;
+ renderStatus();
  const m=readMeta();
  if(!m.pending||!configured()||!navigator.onLine||!session()?.access_token||busy)return;
  clearTimeout(timer);
@@ -517,9 +522,9 @@ function init(opts={}){
  getDb=opts.getDb||getDb;
  shouldDeferAutoSync=typeof opts.shouldDeferAutoSync==='function'?opts.shouldDeferAutoSync:(()=>false);
  renderStatus();
- window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token&&!shouldDeferAutoSync())syncNow().catch(()=>{});});
+ window.addEventListener('online',()=>{renderStatus();if(readMeta().pending&&session()?.access_token&&!isSyncDeferred())syncNow().catch(()=>{});});
  window.addEventListener('offline',renderStatus);
- const refresh=()=>{if(configured()&&navigator.onLine&&session()?.access_token&&!busy&&!shouldDeferAutoSync())syncNow().catch(()=>{});};
+ const refresh=()=>{if(configured()&&navigator.onLine&&session()?.access_token&&!busy&&!isSyncDeferred())syncNow().catch(()=>{});};
  window.addEventListener('focus',refresh);
  if(typeof setInterval==='function')setInterval(refresh,30000);
 }

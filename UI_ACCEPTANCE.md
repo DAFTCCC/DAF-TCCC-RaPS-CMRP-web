@@ -1,4 +1,4 @@
-# UI acceptance — v4.5.0
+# UI acceptance — v4.5.1
 
 All results below were obtained locally with synthetic records. No real study participants, NUC account mutations, invitations, or production grading writes were used.
 
@@ -46,9 +46,10 @@ python3 tests/roles_browser.py
 python3 tests/study_browser.py
 python3 tests/warning_browser.py
 python3 tests/files_browser.py
+python3 tests/timing_browser.py
 ```
 
-GitHub Actions now runs the five browser suites in addition to the static and Node checks. Local passes do not establish a successful hosted CI run.
+GitHub Actions now runs the six browser suites in addition to the static and Node checks. Local passes do not establish a successful hosted CI run.
 
 ## Live NUC verification still required
 
@@ -60,3 +61,16 @@ The test API models authorization; it does not run PostgreSQL policies, GoTrue, 
 Locally passed: four-role username sign-in and rename with the same Auth identity, Enterprise username management, all eight full-criterion PDF downloads parsed with pypdf, Unicode clinical symbols, multipage CMC/CPP, participant enrollment/exposure PDF, aligned longitudinal CSV columns and measurement identifiers, CSV/PDF share attachments with fresh click activation, cancellation and failure fallback, unsupported file-sharing fallback, and offline export blocking. Artifacts are generated under `/tmp/fieldready-file-review`; the mobile participant view was also inspected visually.
 
 The real migration passed in isolated PostgreSQL, including reapplication, permissions and throttling. The login handler passed isolated request tests. This verifies the new database code locally; migration 013 and the new function have **not** been installed or authenticated against the live NUC. Actual phone/tablet sharing and gateway routing remain device/NUC acceptance items. Direct email sending remains deferred.
+
+
+## v4.5.1 grading and evaluation review
+
+`tests/timing_browser.py` exercises the production app and sync client on 390px and 1280px viewports. It checks text contrast and touch height for green Start/Resume and red Stop, disabled controls, stable stopwatch focus/taps/keyboard activation, exact source timing boundaries, active/paused reset guards, offline local persistence with no grading requests, and continuous-hold segment timing. It also advances 92 seconds of polling plus focus/reconnect and incoming snapshots: unsaved notes, ratings, focused input and criterion DOM stay intact without server calls. Finalization syncs explicitly; finalized review stays stable for another 61 seconds; automatic reads resume after leaving the screen. Switching accounts after unfinished grading loads the new scope and preserves old pending work in the owner's recovery backup.
+
+The Node suite adds production grading/timer function checks for 4,999/5,000/10,000/10,001ms NDC boundaries, wall/active/continuous clocks, administrative holds, critical failures, NT/N/O, missing classification, missing/active/recovered stopwatch, unfinished history, and repeated timer failures. Sync checks verify explicit pause without relying on a UI flag and rejection of a snapshot already in flight when grading starts. Account journeys check that invitation/approval role options match server support.
+
+No skill content, score threshold, intervention assignments or NUC schema changed in this release. Live NUC role acceptance and actual device file-sharing remain separate from local tests. The decision-maker checklist is in `EVALUATION_GUIDE.md`.
+
+Export checks also preserve raw clinical timer instances in event/longitudinal CSVs, including a 60,001ms failure against a 60,000ms maximum. The field is appended to Enterprise Detail too. Overall stopwatch seconds remain separate.
+
+Release validation: static validation passed; 56 Node regression tests passed; the username migration check passed in isolated PostgreSQL; all six browser suites passed locally. No authenticated live NUC grading or production data mutations were performed.

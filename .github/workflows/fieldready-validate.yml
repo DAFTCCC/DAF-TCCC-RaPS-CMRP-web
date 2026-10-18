@@ -56,3 +56,5 @@ jobs:
         run: python tests/warning_browser.py
       - name: Username login and PDF/CSV file sharing
         run: python tests/files_browser.py
+      - name: Stable grading, sync suspension, and timing controls
+        run: python tests/timing_browser.py

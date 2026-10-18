@@ -86,3 +86,8 @@ node --test tests/username_database.mjs
 ```
 
 This executes the real migration twice, checks unique normalized names, owner/Enterprise renames, inactive and anonymous denial, service-only resolution, default names for new users, and persisted per-name/global throttles. It does not verify the live NUC's gateway, GoTrue configuration, mounted functions, or installed RLS. The NUC deployment script's shell syntax is checked locally; its Docker operations must run on the NUC.
+
+
+## Grading stability and timer controls (v4.5.1)
+
+Run `python3 tests/timing_browser.py` with the same Playwright runtime. It uses actual app/sync code, a local API double and controlled browser time to test desktop/mobile timer colors/contrast, touch size, long taps, focus preservation, exact boundaries, resets/pauses, offline saves, 92 seconds of background refresh suppression, explicit finalization sync, stable review and shared-browser account isolation. Screenshots are saved under `/tmp/fieldready-timing-review`. `node --test tests/*.cjs` includes focused production grading/timer and sync-pause checks. See `UI_ACCEPTANCE.md` for details and live-service limits.

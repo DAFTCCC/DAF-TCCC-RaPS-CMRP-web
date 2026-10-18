@@ -39,6 +39,7 @@ let filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};
 let ticker=null;
 let currentAccessProfile=null,currentAccessMembership=null;
 let gradingSyncLocked=false;
+let signingOut=false;
 let evalWakeLock=null,evalBackgroundedAt=null;
 
 function scopeOptions(role,majcom='',installationId=''){
@@ -90,6 +91,12 @@ function normalizeTimerStore(id,value){
  if(value&&Array.isArray(value.instances)){
   value.currentIndex=Number.isInteger(value.currentIndex)?value.currentIndex:(value.instances.length?value.instances.length-1:-1);
   value.instances=value.instances.map((x,i)=>({...blankTimerInstance(id,i),...x,index:Number(x?.index)||i+1,id:x?.id||`${id}-${i+1}`,segments:Array.isArray(x?.segments)?x.segments:[]}));
+  // Older resets could leave an unfinished instance behind a blank/new one.
+  // Bring it back into the controls without discarding any timing history.
+  const unfinished=x=>x?.wallStart&&!x.wallStop&&!x.voided;
+  const openIndex=value.instances.findIndex(unfinished);
+  if(openIndex>=0&&!unfinished(value.instances[value.currentIndex]))value.currentIndex=openIndex;
+  else if(value.currentIndex<0||value.currentIndex>=value.instances.length)value.currentIndex=value.instances.length-1;
   return value;
  }
  const store={instances:[],currentIndex:-1};
@@ -144,7 +151,7 @@ function installation(id){return LOC.installations.find(i=>i.id===id)||null;}
 function installationLabel(i){if(!i)return '';const suffix=i.state?`, ${i.state}`:(i.country&&i.country!=='USA'?`, ${i.country}`:'');return `${i.name}${suffix}`;}
 function eventHomeName(e){return installation(e.homeInstallationId)?.name||e.homeInstallationName||'—';}
 function getEval(){return participant()?.evaluation||null;}
-function showView(id){if(id!=='evalView')releaseEvalWakeLock();document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});}
+function showView(id){const leavingEvaluation=id!=='evalView'&&$('evalView').classList.contains('active');if(id!=='evalView')releaseEvalWakeLock();document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});if(leavingEvaluation)SYNC?.resumeAutoSync?.();}
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200);}
 let modalReturnFocus=null;
 function setAccessGate(visible){
@@ -288,8 +295,8 @@ async function renderAdmin(){
  }
 }
 
-function adminRoleForm(role='evaluator',membership=null){
- return `<label><span>Role</span><select name="role" id="adminRole"><option value="evaluator" ${role==='evaluator'?'selected':''}>Evaluator</option><option value="program_manager" ${role==='program_manager'?'selected':''}>Program Manager</option><option value="majcom_manager" ${role==='majcom_manager'?'selected':''}>MAJCOM Manager</option><option value="enterprise" ${role==='enterprise'?'selected':''}>Enterprise</option></select></label><div id="adminScopeFields" class="full">${scopeOptions(role,membership?.scope_type==='majcom'?membership.scope_value:'',membership?.scope_type==='installation'?membership.scope_value:'')}</div>`;
+function adminRoleForm(role='evaluator',membership=null,allowEnterprise=true){
+ return `<label><span>Role</span><select name="role" id="adminRole"><option value="evaluator" ${role==='evaluator'?'selected':''}>Evaluator</option><option value="program_manager" ${role==='program_manager'?'selected':''}>Program Manager</option><option value="majcom_manager" ${role==='majcom_manager'?'selected':''}>MAJCOM Manager</option>${allowEnterprise?`<option value="enterprise" ${role==='enterprise'?'selected':''}>Enterprise</option>`:''}</select></label><div id="adminScopeFields" class="full">${scopeOptions(role,membership?.scope_type==='majcom'?membership.scope_value:'',membership?.scope_type==='installation'?membership.scope_value:'')}</div>`;
 }
 function wireAdminRoleScope(form,membership=null){
  const role=form.querySelector('#adminRole'),scope=form.querySelector('#adminScopeFields');
@@ -298,7 +305,7 @@ function wireAdminRoleScope(form,membership=null){
 }
 function openApproveRequest(r){
  if(!r)return;
- openModal('Approve FieldReady account',`<p><b>${esc(r.display_name||r.email)}</b><br>${esc(r.email)}</p><form id="approveAccountForm"><div class="formGrid">${adminRoleForm('evaluator')}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Approve account</button></div></form>`);
+ openModal('Approve FieldReady account',`<p><b>${esc(r.display_name||r.email)}</b><br>${esc(r.email)}</p><form id="approveAccountForm"><div class="formGrid">${adminRoleForm('evaluator',null,false)}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Approve account</button></div></form>`);
  const form=$('approveAccountForm');wireAdminRoleScope(form);
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{await SYNC.approveAccountRequest(r.id,fd.get('role'),fd.get('scopeType')||null,fd.get('scopeValue')||null);closeModal();toast('Account approved.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to approve account.');}};
 }
@@ -314,7 +321,7 @@ function openManageUser(p,membership){
  if(removeBtn)removeBtn.onclick=async()=>{if(!confirm('Remove this user\'s FieldReady access? Historical study records will be retained.'))return;removeBtn.disabled=true;try{await SYNC.setUserAccess(p.user_id,false,'evaluator',null,null);closeModal();toast('User access removed.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to remove user access.');removeBtn.disabled=false;}};
 }
 function openInviteUser(){
- openModal('Invite FieldReady user',`<p>The invitation email is sent by the dedicated FieldReady Auth service. The invited user sets their own password; no administrator password is created or exposed.</p><form id="inviteAccountForm"><div class="formGrid"><label><span>Name</span><input name="displayName" required></label><label><span>Email</span><input name="email" type="email" required></label>${adminRoleForm('evaluator')}</div><div id="inviteAccountError" class="accessError hidden"></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Send invitation</button></div></form>`);
+ openModal('Invite FieldReady user',`<p>The invitation email is sent by the dedicated FieldReady Auth service. The invited user sets their own password; no administrator password is created or exposed.</p><form id="inviteAccountForm"><div class="formGrid"><label><span>Name</span><input name="displayName" required></label><label><span>Email</span><input name="email" type="email" required></label>${adminRoleForm('evaluator',null,false)}</div><div id="inviteAccountError" class="accessError hidden"></div><div class="actionsRow spaced"><button class="btn primary" type="submit">Send invitation</button></div></form>`);
  const form=$('inviteAccountForm');wireAdminRoleScope(form);
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),err=$('inviteAccountError'),btn=form.querySelector('button[type="submit"]');err.classList.add('hidden');btn.disabled=true;try{await SYNC.inviteUser({email:fd.get('email'),displayName:fd.get('displayName'),role:fd.get('role'),scopeType:fd.get('scopeType')||null,scopeValue:fd.get('scopeValue')||null});closeModal();toast('Invitation sent and FieldReady access provisioned.');renderAdmin();}catch(ex){err.textContent=ex?.message||'Unable to send invitation.';err.classList.remove('hidden');}finally{btn.disabled=false;}};
 }
@@ -339,6 +346,12 @@ function openUsernameSettings(profile=currentAccessProfile){
  };
 }
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
+function clinicalTimerExport(ev,s,criterionId){
+ return JSON.stringify((s?.timers||[]).filter(d=>d.linkedItemId===criterionId).map(d=>({
+  timer_id:d.id,standard:d.standard||null,grading_clock:d.gradingClock||'active',
+  min_ms:d.minMs??null,max_ms:d.maxMs??null,instances:ev?.timers?.[d.id]?.instances||[]
+ })));
+}
 function eventClosed(e=event()){return !!e?.closedAt;}
 function canManageEventLifecycle(){return WARNING_ONLY||['program_manager','majcom_manager','enterprise'].includes(currentAccessProfile?.role||'');}
 function canDeleteEvent(){return currentAccessProfile?.role==='enterprise';}
@@ -358,7 +371,7 @@ function scoring(ev=getEval(),s=skill()){
 }
 function finalizable(ev=getEval(),s=skill()){
  const score=scoring(ev,s);
- const activeTimerDefs=(s?.timers||[]).filter(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.voided&&!x.wallStop&&(x.running||x.paused||timerNeedsRecovery(x)));});
+ const activeTimerDefs=(s?.timers||[]).filter(d=>unfinishedTimerInstances(d.id,ev).length>0);
  const timerPassMissing=(s?.timers||[]).filter(d=>d.requiredForPass!==false&&d.linkedItemId&&ev?.ratings?.[d.linkedItemId]==='pass'&&timerAggregateStatus(d,ev)!=='met');
  const stopwatchRecovery=!!ev?.stopwatch?.recoveryRequired;
  const running=!!ev?.stopwatch?.running||activeTimerDefs.length>0;
@@ -430,7 +443,7 @@ document.querySelectorAll('[data-open-measure]').forEach(b=>b.onclick=()=>{const
  $('criterionComparison').innerHTML=items.length?`<table class="dataTable comparisonTable"><thead><tr><th>Criterion</th>${times.map(t=>`<th>${t==='baseline'?'Baseline':t==='3-month'?'3-Month':'6-Month'}</th>`).join('')}</tr></thead><tbody>${items.map(i=>`<tr><td><b>${esc(i.id)}</b>${i.critical?' <span class="critBadge">CRITICAL</span>':''}${i.provenance==='daf'?' <span class="status">DAF Supplemental</span>':''}<div class="tiny">${esc(i.text)}</div></td>${times.map(t=>{const ev=picked[t]?.ev,r=ev?.ratings?.[i.id]||'',d=ev?.failureDetails?.[i.id];return `<td><span class="compareRating ${ratingClass(r)}">${ratingLabel(r)}</span>${r==='fail'&&d?`<div class="tiny">${esc(d.modeLabel||'')}<br>${esc(d.contributorLabel||'')}</div>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody></table>`:'<div class="empty">No criteria match this comparison filter.</div>';
  $('exportRecordBtn').onclick=()=>refreshForExport(exportLongitudinalRecord);
 }
-function longitudinalCsvText(rows=recordRows()){const headers=['participant_id','skill_id','timepoint','date','event','study_arm','majcom','installation','final_result','score_percent','critical_fail_count','assessment_stopwatch_seconds','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','event_id','roster_record_id','evaluation_id','assessment_type','assessment_date','finalized_at','skill_source','evaluator_id','assigned_arm','initial_training_date'];const out=[headers];rows.filter(r=>r.ev).forEach(r=>{const sc=scoring(r.ev,r.s);itemsForSkill(r.s).forEach(i=>{const d=r.ev.failureDetails?.[i.id]||{};out.push([r.p.participantId,r.e.skillId,r.e.timepoint,r.e.date,r.e.name,r.e.studyArm,r.e.majcom,eventHomeName(r.e),r.ev.finalResult||'',sc.percent==null?'':(sc.percent*100).toFixed(1),sc.criticalFail,r.ev.stopwatch?.completed?Math.round((r.ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.text,i.critical?'Y':'N',r.ev.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',r.e.id,r.p.id,r.ev.id||'',r.ev.assessment?.phase||'unclassified',r.ev.assessment?.date||'',r.ev.finalizedAt?new Date(r.ev.finalizedAt).toISOString():'',r.ev.skillSource||r.s.source,r.ev.evaluatorId||'',r.p.enrollment?.arm||'',r.p.enrollment?.trainingDate||'']);});});return out.map(r=>r.map(csvCell).join(',')).join('\n');}
+function longitudinalCsvText(rows=recordRows()){const headers=['participant_id','skill_id','timepoint','date','event','study_arm','majcom','installation','final_result','score_percent','critical_fail_count','assessment_stopwatch_seconds','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','event_id','roster_record_id','evaluation_id','assessment_type','assessment_date','finalized_at','skill_source','evaluator_id','assigned_arm','initial_training_date','clinical_timers_json'];const out=[headers];rows.filter(r=>r.ev).forEach(r=>{const sc=scoring(r.ev,r.s);itemsForSkill(r.s).forEach(i=>{const d=r.ev.failureDetails?.[i.id]||{};out.push([r.p.participantId,r.e.skillId,r.e.timepoint,r.e.date,r.e.name,r.e.studyArm,r.e.majcom,eventHomeName(r.e),r.ev.finalResult||'',sc.percent==null?'':(sc.percent*100).toFixed(1),sc.criticalFail,r.ev.stopwatch?.completed?Math.round((r.ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.text,i.critical?'Y':'N',r.ev.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',r.e.id,r.p.id,r.ev.id||'',r.ev.assessment?.phase||'unclassified',r.ev.assessment?.date||'',r.ev.finalizedAt?new Date(r.ev.finalizedAt).toISOString():'',r.ev.skillSource||r.s.source,r.ev.evaluatorId||'',r.p.enrollment?.arm||'',r.p.enrollment?.trainingDate||'',clinicalTimerExport(r.ev,r.s,i.id)]);});});return out.map(r=>r.map(csvCell).join(',')).join('\n');}
 function recordCsvFileName(rows=recordRows()){return `FieldReady_${safeName(rows[0]?.p.participantId||'Participant')}_Longitudinal.csv`;}
 function exportLongitudinalRecord(){download(recordCsvFileName(),longitudinalCsvText(),'text/csv');}
 function renderStudyRecord(rows){
@@ -565,9 +578,9 @@ async function showEventForm(existing=null){
    }
    saveDb();
    if(!WARNING_ONLY){
-    await SYNC.syncNow(db);
+    await SYNC.syncNow(db,{requireFresh:true});
     await SYNC.setEventEvaluators(target.id,selectedEvaluatorIds);
-    await SYNC.syncNow(db);
+    await SYNC.syncNow(db,{requireFresh:true});
    }
    closeModal();
    openEvent(target.id);
@@ -622,7 +635,7 @@ function openEvaluation(pid){
  currentSection=0;
  renderEvaluation();
 }
-function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt&&!eventClosed(e)){gradingSyncLocked=true;SYNC?.pauseAutoSync?.();}showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';['evalName','evalId','overallNotes'].forEach(id=>$(id).disabled=!!ev.finalizedAt||eventClosed(e));$('reviewFinalizeBtn').disabled=!!ev.finalizedAt||eventClosed(e);$('voidAttemptBtn').disabled=!!ev.finalizedAt||eventClosed(e);$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderAssessmentContext();renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();requestEvalWakeLock();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
+function renderEvaluation(){const e=event(),p=participant(),s=skill(e),ev=getEval();if(!e||!p||!s||!ev)return renderEvent();if(!ev.finalizedAt&&!eventClosed(e))gradingSyncLocked=true;SYNC?.pauseAutoSync?.();showView('evalView');$('evalKicker').textContent=`${s.shortName.toUpperCase()} · ${e.timepoint.toUpperCase()}`;$('evalTitle').textContent=`Participant ${p.participantId}`;$('evalSub').textContent=`${s.source} · Study arm hidden during scoring`;$('sectionSelect').innerHTML=s.sections.map((sec,i)=>`<option value="${i}">${esc(sec.code)} — ${esc(sec.title)}</option>`).join('');$('sectionSelect').value=String(currentSection);$('evalName').value=ev.evaluatorName||'';$('evalId').value=ev.evaluatorId||'';$('overallNotes').value=ev.notes||'';['evalName','evalId','overallNotes'].forEach(id=>$(id).disabled=!!ev.finalizedAt||eventClosed(e));$('reviewFinalizeBtn').disabled=!!ev.finalizedAt||eventClosed(e);$('voidAttemptBtn').disabled=!!ev.finalizedAt||eventClosed(e);$('recordFromEvalBtn').onclick=()=>openLongitudinalRecord(p.participantId,e.skillId);renderAssessmentContext();renderStopwatch();renderTimers();renderCriteria();renderEvalKpis();requestEvalWakeLock();clearInterval(ticker);ticker=setInterval(()=>{if($('evalView').classList.contains('active')){renderStopwatch(true);renderTimers(true);}},250);}
 function renderEvalKpis(){const st=scoring();$('scoreKpi').textContent=st.percent==null?'—':`${(st.percent*100).toFixed(1)}%`;$('critKpi').textContent=st.criticalFail;$('unresolvedKpi').textContent=st.unresolved;}
 function stopwatchElapsed(sw,at=now(),monoAt=monoNow()){
  if(!sw)return 0;
@@ -634,7 +647,12 @@ function renderStopwatch(tickOnly=false){
  const s=skill(),ev=getEval();if(!s||!ev)return;
  const def=s.stopwatch||{label:'Assessment Stopwatch'},sw=ev.stopwatch=normalizeStopwatch(ev.stopwatch),ms=stopwatchElapsed(sw),valid=sw.completed?timerValidity(def,ms):null;
  const standard=def.standard||'',state=sw.recoveryRequired?'RECOVERY REQUIRED — RESET AND RESTART':sw.running?'RUNNING':sw.completed?'RECORDED':'READY';
- $('assessmentStopwatch').innerHTML=`<div class="stopwatchCard ${sw.recoveryRequired?'fail':valid===false?'fail':valid===true&&def.requiredForPass?'ok':''}"><div><small>ASSESSMENT STOPWATCH</small><h3>${esc(def.label||'Assessment Stopwatch')}</h3><span class="tiny">${esc(standard)}${standard?' · ':''}${esc(state)}</span></div><div class="stopwatchValue">${sw.recoveryRequired?'--:--':fmtMs(ms)}</div><div class="stopwatchActions">${!ev.finalizedAt&&!eventClosed()?`${!sw.recoveryRequired&&(sw.running||!sw.completed)?`<button class="btn ${sw.running?'danger':'primary'}" id="stopwatchToggle">${esc(sw.running?(def.stopLabel||'STOP'):(def.startLabel||'START'))}</button>`:''}<button class="btn ghost" id="stopwatchReset">${sw.recoveryRequired?'RESET / RESTART':'Reset'}</button>`:''}</div></div>`;
+ if(tickOnly){
+  const value=$('assessmentStopwatch').querySelector('.stopwatchValue');
+  if(value)value.textContent=sw.recoveryRequired?'--:--':fmtMs(ms);
+  return;
+ }
+ $('assessmentStopwatch').innerHTML=`<div class="stopwatchCard ${sw.recoveryRequired?'fail':valid===false?'fail':valid===true&&def.requiredForPass?'ok':''}"><div><small>ASSESSMENT STOPWATCH</small><h3>${esc(def.label||'Assessment Stopwatch')}</h3><span class="tiny">${esc(standard)}${standard?' · ':''}${esc(state)}</span></div><div class="stopwatchValue">${sw.recoveryRequired?'--:--':fmtMs(ms)}</div><div class="stopwatchActions">${!ev.finalizedAt&&!eventClosed()?`${!sw.recoveryRequired&&(sw.running||!sw.completed)?`<button class="btn timerAction ${sw.running?'timerStop':'timerStart'}" id="stopwatchToggle">${esc(sw.running?(def.stopLabel||'STOP'):(def.startLabel||'START'))}</button>`:''}<button class="btn ghost" id="stopwatchReset">${sw.recoveryRequired?'RESET / RESTART':'Reset'}</button>`:''}</div></div>`;
  const tog=$('stopwatchToggle');if(tog)tog.onclick=toggleStopwatch;const rst=$('stopwatchReset');if(rst)rst.onclick=resetStopwatch;
 }
 function toggleStopwatch(){
@@ -657,6 +675,7 @@ function timerStore(id,ev=getEval()){
  ev.timers[id]=normalizeTimerStore(id,ev.timers[id]);
  return ev.timers[id];
 }
+function unfinishedTimerInstances(id,ev=getEval()){return timerStore(id,ev).instances.filter(x=>x.wallStart&&!x.wallStop&&!x.voided);}
 function currentTimerInstance(id,ev=getEval()){const s=timerStore(id,ev);return s.currentIndex>=0?s.instances[s.currentIndex]:null;}
 function ensureTimerInstance(id,ev=getEval()){const s=timerStore(id,ev);let x=currentTimerInstance(id,ev);if(!x||x.wallStop||x.voided){x=blankTimerInstance(id,s.instances.length);s.instances.push(x);s.currentIndex=s.instances.length-1;}return x;}
 function timerNeedsRecovery(x){return !!(x?.wallStart&&!x.wallStop&&!x.voided&&(!x.runtimeId||x.runtimeId!==RUNTIME_ID));}
@@ -725,8 +744,8 @@ function timerAction(id,act){
    saveDb();renderTimers();renderCriteria();renderEvalKpis();return beginFailureClassification(def.linkedItemId,{forcedMode:'timing-sequence',timerId:id});
   }
  }else if(act==='reset'){
+  if(unfinishedTimerInstances(id,ev).length){alert('Stop or void the unfinished timer instance before resetting. Its timing history will be preserved.');return;}
   if(def.resetPolicy==='protected'&&!confirm('Reset this protected timer? Use this only if the timing attempt was invalid before finalization.'))return;
-  if(x&&x.wallStart&&!x.wallStop&&!x.voided&&!confirm('Preserve the current incomplete timer instance and create a new instance?'))return;
   const s=timerStore(id,ev),n=blankTimerInstance(id,s.instances.length);s.instances.push(n);s.currentIndex=s.instances.length-1;
  }else if(act==='void'){
   if(!x?.wallStart)return;const reason=prompt('Reason for voiding this timer instance (required):');if(!reason?.trim())return;
@@ -744,7 +763,7 @@ function timerCardMarkup(def,ev=getEval(),inline=false){
   ?`<button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`
   :`<button class="btn ghost timerControl" data-timer-act="pause" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>PAUSE</button><button class="btn ghost timerControl" data-timer-act="admin" data-timer-id="${def.id}" ${!x?.running?'disabled':''}>ADMIN HOLD</button>`;
  const history=store.instances.filter(z=>z.wallStart).map(z=>`<div class="timerHistoryRow"><span>#${z.index}${z.voided?' VOID':''}</span><span>${z.voided?esc(z.voidReason):`${fmtMs(timerDuration(def,z,z.wallStop||now()))} · ${rawTimerResult(def,z,z.wallStop||now()).toUpperCase()}`}</span></div>`).join('');
- return `<div class="timerCard ${inline?'inlineTimerCard ':''}${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}" data-inline-timer-card="${def.id}"><header><b>${inline?'TIMED CRITERION · ':''}${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue" data-inline-timer-display="${def.id}">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt&&!eventClosed()?`<button class="btn primary timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn danger timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b data-inline-timer-status="${def.id}">${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
+ return `<div class="timerCard ${inline?'inlineTimerCard ':''}${status==='notmet'||recovery?'fail':status==='met'||status==='live-met'?'ok':''}" data-inline-timer-card="${def.id}"><header><b>${inline?'TIMED CRITERION · ':''}${esc(def.label)}</b><span class="tiny">${esc(def.standard||'')}</span></header><div class="timerValue" data-inline-timer-display="${def.id}">${recovery?'--:--':fmtMs(ms)}</div><div class="timerBtns">${!ev.finalizedAt&&!eventClosed()?`<button class="btn timerAction timerStart timerControl" data-timer-act="start" data-timer-id="${def.id}" ${x?.running?'disabled':''}>${esc(startLabel)}</button>${pauseBtn}<button class="btn timerAction timerStop timerControl" data-timer-act="stop" data-timer-id="${def.id}" ${!x?.wallStart||!!x?.wallStop||recovery?'disabled':''}>${esc(def.stopLabel||'STOP')}</button><button class="btn ghost timerControl" data-timer-act="reset" data-timer-id="${def.id}">${def.repeatable?'NEXT / RESET':'RESET'}</button><button class="btn ghost danger timerControl" data-timer-act="void" data-timer-id="${def.id}" ${!x?.wallStart?'disabled':''}>VOID</button>`:''}</div><div class="tiny"><b data-inline-timer-status="${def.id}">${esc(live)}</b> · ${esc(def.description||'')} ${x?.paused?`· ${x.pauseKind==='admin'?'ADMIN HOLD':'TACTICAL PAUSE'}`:''}</div>${history?`<div class="timerHistory">${history}</div>`:''}</div>`;
 }
 function bindTimerControls(root=document){
  root.querySelectorAll('[data-timer-act]').forEach(b=>b.onclick=()=>timerAction(b.dataset.timerId,b.dataset.timerAct));
@@ -781,7 +800,7 @@ function renderActiveTimers(){
 function evaluationTimingUnresolved(){
  const ev=getEval(),s=skill();if(!ev||!s)return false;
  if(ev.stopwatch?.running||ev.stopwatch?.recoveryRequired)return true;
- return (s.timers||[]).some(d=>{const x=currentTimerInstance(d.id,ev);return !!(x?.wallStart&&!x.wallStop&&!x.voided&&(x.running||x.paused||timerNeedsRecovery(x)));});
+ return (s.timers||[]).some(d=>unfinishedTimerInstances(d.id,ev).length>0);
 }
 async function requestEvalWakeLock(){
  if(!$('evalView')?.classList.contains('active')||getEval()?.finalizedAt||!('wakeLock' in navigator))return;
@@ -856,9 +875,9 @@ function reviewFinalize(){
   try{if(!WARNING_ONLY)await SYNC?.syncNow?.(db,{force:true});}catch(ex){toast('Finalized locally; server sync pending.');}
  };
 }
-function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt||eventClosed()){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();renderEvent();toast('Attempt voided; audit copy retained.');}
+function voidAttempt(){const p=participant(),ev=getEval();if(!p||!ev||ev.finalizedAt||eventClosed()){alert('Only an in-progress evaluation may be voided here. Finalized corrections require controlled data management outside this prototype.');return;}const reason=prompt('Administrative reason for void/retest:');if(!reason)return;p.voids.push({...deep(ev),voidedAt:now(),voidReason:reason});p.evaluation=null;saveDb();gradingSyncLocked=false;renderEvent();toast('Attempt voided; audit copy retained.');}
 
-function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version','roster_record_id','evaluation_id','assessment_type','assessment_date','enrollment_id','assigned_arm','initial_training_date','scenario_version'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,ev?.skillSource||s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',ev?.appVersion||BUILD.versionName,p.id,ev?.id||'',ev?.assessment?.phase||'unclassified',ev?.assessment?.date||'',p.enrollment?.id||'',p.enrollment?.arm||'',p.enrollment?.trainingDate||'',ev?.scenarioVersion||e.scenarioVersion||'']);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
+function eventCsvText(e=event()){const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation_id','home_installation_name','unit','training_location','skill_id','skill_source','participant_id','afsc','clinical_years','work_section','practice_sessions','repetitions','coaching_events','trials_to_mastery','training_minutes','assessment_stopwatch_seconds','finalized_at','final_result','score_percent','critical_fail_count','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','evaluator_id','app_version','roster_record_id','evaluation_id','assessment_type','assessment_date','enrollment_id','assigned_arm','initial_training_date','scenario_version','clinical_timers_json'];const rows=[headers];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,e.homeInstallationId,eventHomeName(e),e.unit,e.trainingLocation,e.skillId,ev?.skillSource||s.source,p.participantId,p.afsc,p.clinicalYears,p.workSection,p.intervention?.sessions||0,p.intervention?.repetitions||0,p.intervention?.coachingEvents||0,p.intervention?.trialsToMastery||0,p.intervention?.trainingMinutes||0,ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',ev?.finalizedAt?new Date(ev.finalizedAt).toISOString():'',ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),sc?.criticalFail??'',i.id,i.text,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',ev?.evaluatorId||'',ev?.appVersion||BUILD.versionName,p.id,ev?.id||'',ev?.assessment?.phase||'unclassified',ev?.assessment?.date||'',p.enrollment?.id||'',p.enrollment?.arm||'',p.enrollment?.trainingDate||'',ev?.scenarioVersion||e.scenarioVersion||'',clinicalTimerExport(ev,s,i.id)]);});});return rows.map(r=>r.map(csvCell).join(',')).join('\n');}
 function eventCsvFileName(e=event()){return `FieldReady_${safeName(e.name)}_${e.date}_${String(e.id).slice(0,8)}.csv`;}
 async function refreshForExport(action){
  try{
@@ -951,14 +970,14 @@ async function closeEvent(){
  try{
   const out=await SYNC.closeEvent(e.id,eventCsvText(e),eventCsvFileName(e));
   e.closedAt=out?.closed_at?Date.parse(out.closed_at):Date.now();e.closedBy=SYNC.session()?.user?.id||null;e._syncDirtyEvent=false;
-  localStorage.setItem(DB_KEY,JSON.stringify(db));await SYNC.syncNow(db);
+  localStorage.setItem(DB_KEY,JSON.stringify(db));await SYNC.syncNow(db,{requireFresh:true});
   toast(`Class closed · NUC archive ${out?.archive_month||''}`);renderEvent();renderHomeSilently();
  }catch(ex){alert('Close class failed: '+(ex?.message||ex));}
 }
-async function deleteEvent(){const e=event();if(!e||!canDeleteEvent())return;if(!confirm(`Delete "${e.name}" from FieldReady? The NUC CSV archive and audit trail will be retained.`))return;try{await SYNC.deleteEvent(e.id);db.events=db.events.filter(x=>x.id!==e.id);localStorage.setItem(DB_KEY,JSON.stringify(db));currentEventId=null;await SYNC.syncNow(db);toast('Class deleted. NUC archive retained.');renderHome();}catch(ex){alert('Delete class failed: '+(ex?.message||ex));}}
+async function deleteEvent(){const e=event();if(!e||!canDeleteEvent())return;if(!confirm(`Delete "${e.name}" from FieldReady? The NUC CSV archive and audit trail will be retained.`))return;try{await SYNC.deleteEvent(e.id);db.events=db.events.filter(x=>x.id!==e.id);localStorage.setItem(DB_KEY,JSON.stringify(db));currentEventId=null;await SYNC.syncNow(db,{requireFresh:true});toast('Class deleted. NUC archive retained.');renderHome();}catch(ex){alert('Delete class failed: '+(ex?.message||ex));}}
 function safeName(s){return String(s||'export').replace(/[^a-z0-9_-]+/gi,'_');}
 function managementSummaryCsv(){const events=scopedEvents(),headers=['event_id','event_name','date','timepoint','study_arm','majcom','home_installation','skill','participants','finalized','pass','mean_score','critical_fail'];const rows=[headers];events.forEach(e=>{const a=eventAnalytics(e);rows.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),SKILLS[e.skillId]?.shortName||e.skillId,e.participants.length,a.rows.length,a.pass,a.avg==null?'':(a.avg*100).toFixed(1),a.crit]);});download('FieldReady_Management_Summary.csv',rows.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
-function enterpriseCsv(){const saved=currentEventId;const events=scopedEvents();const out=[];events.forEach(e=>{currentEventId=e.id;const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor'];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};out.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),e.skillId,p.participantId,p.afsc,p.clinicalYears,p.workSection,ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'']);});});});currentEventId=saved;const headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor'];download('FieldReady_Enterprise_Detail.csv',[headers,...out].map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
+function enterpriseCsv(){const saved=currentEventId;const events=scopedEvents();const out=[];events.forEach(e=>{currentEventId=e.id;const s=SKILLS[e.skillId],headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor','clinical_timers_json'];e.participants.forEach(p=>{const ev=p.evaluation,sc=ev?scoring(ev,s):null;allItems(s).forEach(i=>{const d=ev?.failureDetails?.[i.id]||{};out.push([e.id,e.name,e.date,e.timepoint,e.studyArm,e.majcom,eventHomeName(e),e.skillId,p.participantId,p.afsc,p.clinicalYears,p.workSection,ev?.finalResult||'',sc?.percent==null?'':(sc.percent*100).toFixed(1),ev?.stopwatch?.completed?Math.round((ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.critical?'Y':'N',ev?.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',clinicalTimerExport(ev,s,i.id)]);});});});currentEventId=saved;const headers=['event_id','event_name','date','timepoint','study_arm','majcom','installation','skill','participant_id','afsc','clinical_years','work_section','final_result','score_percent','assessment_stopwatch_seconds','criterion_id','critical','rating','failure_mode','primary_contributor','clinical_timers_json'];download('FieldReady_Enterprise_Detail.csv',[headers,...out].map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
 
 function openSyncPanel(){
  if(WARNING_ONLY){openModal('Local testing', '<p>Login is temporarily disabled. Test records are saved only in this browser. Server synchronization is disabled. Use Backup to retain your test records.</p>');return;}
@@ -992,7 +1011,7 @@ function syncAccessButton(){
   const ack=$('ackCheck').checked;
   const email=String($('accessEmail')?.value||'').trim();
   const pw=String($('accessPassword')?.value||'');
-  $('enterBtn').disabled=WARNING_ONLY?!ack:!ack||!email||!pw||!SYNC?.configured?.();
+  $('enterBtn').disabled=signingOut||(WARNING_ONLY?!ack:!ack||!email||!pw||!SYNC?.configured?.());
 }
 async function loadCurrentAccess(){
  const profile=await SYNC.currentProfile();
@@ -1006,6 +1025,7 @@ function enterWithSyncWarning(message){
  openModal('Synchronization needs attention',`<p>${esc(message)}</p><p>Your authorized local work is available. Use Backup to preserve pending changes, then resolve the synchronization error before exporting shared results.</p>`);
 }
 async function unlockFieldReady(){
+  if(signingOut)return;
   const err=$('accessError');
   err?.classList.add('hidden');
   if(!$('ackCheck').checked){syncAccessButton();return;}
@@ -1021,7 +1041,7 @@ async function unlockFieldReady(){
     $('enterBtn').disabled=true;
     await SYNC.signIn(email,password);
     await loadCurrentAccess();
-    await SYNC.syncNow(db);
+    await SYNC.syncNow(db,{requireFresh:true});
     setAccessGate(false);
     $('accessPassword').value='';
     renderHome();
@@ -1036,11 +1056,24 @@ async function unlockFieldReady(){
   }
 }
 async function lockFieldReady(){
-  try{if(!WARNING_ONLY)await SYNC?.signOut?.();}catch{}
-  setAccountUi(null,null);
+  if(signingOut)return;
+  signingOut=true;
+  // Hide records immediately, including when the logout request is offline.
+  setAccessGate(true);
+  closeModal();
+  clearInterval(ticker);
+  releaseEvalWakeLock();
   $('ackCheck').checked=false;
   $('accessPassword').value='';
-  setAccessGate(true);
+  syncAccessButton();
+  try{if(!WARNING_ONLY)await SYNC?.signOut?.();}catch{}
+  // The next authenticated account must reconcile its own server scope.
+  // Pending work is preserved by sync's per-account recovery snapshot.
+  gradingSyncLocked=false;
+  currentEventId=null;currentParticipantId=null;currentRecordKey='';
+  showView('homeView');
+  setAccountUi(null,null);
+  signingOut=false;
   syncAccessButton();
   setTimeout(()=>$('accessEmail')?.focus(),50);
   toast(WARNING_ONLY?'Warning acknowledgement required.':'FieldReady signed out.');
@@ -1081,7 +1114,7 @@ async function handleAuthCallback(){
     setAccountUi(profile);
     setAccessGate(false);
     closeModal();
-    await SYNC.syncNow(db);
+    await SYNC.syncNow(db,{requireFresh:true});
     renderHome();
     toast('FieldReady account activated.');
    }catch(ex){err.textContent=ex?.message||'Unable to set password.';err.classList.remove('hidden');}
@@ -1109,7 +1142,7 @@ async function restoreAuthorizedSession(){
  try{
   await SYNC.requireAuthorizedProfile();
   await loadCurrentAccess();
-  await SYNC.syncNow(db);
+  await SYNC.syncNow(db,{requireFresh:true});
   setAccessGate(false);
  }catch(e){
   if(canUseOwnCachedData()){enterWithSyncWarning(e?.message||'Synchronization failed.');return;}
@@ -1149,9 +1182,8 @@ window.addEventListener('fieldready:remote-db',e=>{
  // Synchronization must never eject an evaluator from the workflow they are
  // actively using. Refresh the current screen in place after reconciliation.
  if(activeView==='evalView'&&event()&&participant()&&getEval()){
-  const y=window.scrollY;
-  renderEvaluation();
-  requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'instant'}));
+  // Finalization can sync explicitly. Keep the already-rendered review stable.
+  return;
  }else if(activeView==='eventView'&&event()){
   renderEvent();
  }else if(activeView==='participantView'&&currentRecordKey){
@@ -1166,7 +1198,7 @@ window.addEventListener('fieldready:remote-db',e=>{
 });
 SYNC?.init?.({
  getDb:()=>db,
- shouldDeferAutoSync:()=>gradingSyncLocked
+ shouldDeferAutoSync:()=>gradingSyncLocked||$('evalView').classList.contains('active')
 });
 document.addEventListener('visibilitychange',()=>{
  if(document.hidden&&$('evalView')?.classList.contains('active')&&evaluationTimingUnresolved())evalBackgroundedAt=now();

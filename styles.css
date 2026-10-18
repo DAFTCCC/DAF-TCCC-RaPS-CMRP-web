@@ -54,3 +54,14 @@
 }
 /* Status messages must never intercept a grading or stopwatch tap. */
 .toast{pointer-events:none}
+
+
+/* Stable, accessible timing actions on both dark and light timer cards. */
+.btn.timerAction{min-height:48px;min-width:88px;font-weight:800}
+.btn.timerStart{background:var(--green);color:#fff;border-color:#b8dcc9}
+.btn.timerStop{background:var(--red);color:#fff;border-color:#efc0bb}
+.btn.timerAction:disabled,.timerControl:disabled{background:#e4eaf0;color:#52606c;border-color:#a6b3be;cursor:not-allowed;filter:none;opacity:1}
+.btn.timerAction:focus-visible,.stopwatchActions .btn:focus-visible,.timerControl:focus-visible{outline:3px solid var(--navy);outline-offset:3px;box-shadow:0 0 0 3px #fff}
+.stopwatchActions .btn{min-height:48px}
+.timerBtns{flex-wrap:wrap}
+.timerBtns .btn{max-width:100%;white-space:normal}

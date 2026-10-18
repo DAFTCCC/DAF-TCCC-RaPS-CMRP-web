@@ -128,10 +128,13 @@ try:
   check('invalid login blocks entry and keyboard focus stays inside the login gate')
   enterprise=session(browser,'enterprise')
   enterprise.locator('#adminBtn').click();expect(enterprise.locator('#adminTitle')).to_have_text('FieldReady Accounts')
-  enterprise.locator('[data-approve-request]').click();enterprise.locator('#approveAccountForm button[type=submit]').click()
+  enterprise.locator('[data-approve-request]').click()
+  assert enterprise.locator('#approveAccountForm option[value=enterprise]').count()==0
+  enterprise.locator('#approveAccountForm button[type=submit]').click()
   expect(enterprise.locator('[data-approve-request]')).to_have_count(0)
   assert api.tables['fr_account_requests'][0]['status']=='approved'
   enterprise.locator('#inviteUserBtn').click();form=enterprise.locator('#inviteAccountForm')
+  assert form.locator('option[value=enterprise]').count()==0
   form.locator('[name=displayName]').fill('Synthetic Invite');form.locator('[name=email]').fill('invite@example.invalid')
   form.locator('button[type=submit]').click();expect(enterprise.locator('#modal')).to_be_hidden()
   assert any(p['email']=='invite@example.invalid' for p in api.tables['fr_profiles'])

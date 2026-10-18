@@ -1,4 +1,12 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.5.0-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.5.1-study-web
+
+## Stable grading and timing controls — v4.5.1
+
+START/RESUME controls are green and STOP/completion controls red, with visible disabled states, keyboard focus and larger touch targets. Timer display ticks update in place. Synchronization is explicitly paused for the evaluation screen, including review, so focus/reconnect/idle refreshes cannot replace it. Finalization can synchronize explicitly; automatic refresh resumes after leaving the finalized evaluation. Active or paused clinical timers must be stopped or voided before resetting, and unfinished history is surfaced and blocks finalization.
+
+Signing out clears the grading pause/context so the next account must reconcile its own scope; pending work from a previous account is retained in a per-account recovery backup. New invitation/approval forms offer only server-supported roles, while Enterprise promotion remains available for existing accounts. Criterion CSV exports now preserve raw clinical timer instances and millisecond boundaries in `clinical_timers_json`. This release needs no NUC migration.
+
+See [EVALUATION_GUIDE.md](EVALUATION_GUIDE.md) for the decision-maker review and feedback checklist. Android packaging and server-free file collection remain deferred.
 
 ## Usernames and file exports — v4.5.0
 

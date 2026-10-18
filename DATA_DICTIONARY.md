@@ -95,3 +95,9 @@ See `STUDY_WORKFLOW.md` for analysis eligibility, export meanings, and remaining
 ## Device synchronization metadata
 
 Local `_serverRevision` and `_syncBaseline` fields record the server version and normalized last-pulled payload used for conflict detection. They are excluded from server participant/evaluation/event payloads and study CSVs. JSON backups may retain them for pending-work recovery. Only changed records are written. Existing records require a matching server revision in a conditional PATCH; a zero-row update is a conflict, not a successful save.
+
+## Clinical timing in criterion CSV exports (v4.5.1)
+
+Event, longitudinal criterion and Enterprise Detail CSVs append `clinical_timers_json`. Each criterion row contains an array of its source-linked clinical timers, with `timer_id`, `standard`, `grading_clock`, `min_ms`, `max_ms` and the recorded `instances`. Criteria without linked clocks contain `[]`. Instances preserve millisecond durations, start/stop timestamps, pauses, segments, result and void history where recorded. An empty instances array means no clock was recorded; it is not a zero-duration measurement.
+
+This preserves evidence for boundary failures such as 60,001 ms against a ≤60,000 ms standard, which rounded stopwatch seconds alone cannot explain. These are raw timing records; unfinished/recovered instances do not establish a valid completed duration. The existing `assessment_stopwatch_seconds` column remains the overall assessment duration, separate from these clinical clocks.

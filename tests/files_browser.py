@@ -22,6 +22,11 @@ for key,s in fixture['skills'].items():
  ev={'id':'eval-'+key,'finalizedAt':1767225600000,'finalResult':'FAIL','ratings':{i['id']:'pass' for i in items},'failureDetails':{items[0]['id']:{'modeLabel':'Incorrect technique','contributorLabel':'Psychomotor execution','comment':'Observed failure ≤ 1:00 — synthetic'}},'assessment':{'phase':'baseline','date':'2026-01-01'},'skillSource':s['source'],'scenarioVersion':'1','stopwatch':{'completed':True,'elapsedMs':60000},'evaluatorId':'synthetic-evaluator'}
  ev['ratings'][items[0]['id']]='fail'
  ev['notes']='Synthetic overall evaluator notes'
+ if key=='TQ':
+  timer=s['timers'][0]
+  ev['timers']={timer['id']:{'currentIndex':0,'instances':[{'index':1,'wallStart':1767225600000,'wallStop':1767225660001,'finalDurationMs':60001,'result':'notmet','running':False,'paused':False}]}}
+  ev['ratings'][timer['linkedItemId']]='fail'
+  ev['failureDetails'][timer['linkedItemId']]={'mode':'timing-sequence','modeLabel':'Timing / sequence','contributor':'system-context','contributorLabel':'System / performance context','comment':'Synthetic missed deadline'}
  api.tables['fr_events'].append({'id':e['id'],'majcom':api.command,'home_installation_id':base['id'],'skill_id':key,'server_revision':1,'created_by':'program','payload':e})
  api.tables['fr_participants'].append({'id':p['id'],'event_id':e['id'],'participant_code':'N001','server_revision':1,'payload':p})
  api.tables['fr_evaluations'].append({'id':ev['id'],'event_id':e['id'],'participant_id':p['id'],'finalized_at':'2026-01-01T00:00:00Z','server_revision':1,'payload':ev})
@@ -65,6 +70,11 @@ try:
    assert page.evaluate('window.FieldReadySync.session().user.id')==role
    print('PASS: username sign-in, rename, role/identity retained:',role,flush=True)
    if role=='enterprise':
+    with page.expect_download() as info:page.locator('#enterpriseCsvBtn').click()
+    enterprise_rows=list(csv.DictReader(Path(info.value.path()).open()))
+    assert all(None not in r for r in enterprise_rows)
+    timed=next(r for r in enterprise_rows if r['criterion_id']==fixture['skills']['TQ']['timers'][0]['linkedItemId'])
+    assert json.loads(timed['clinical_timers_json'])[0]['instances'][0]['finalDurationMs']==60001
     page.locator('#adminBtn').click();page.locator('[data-edit-user=evaluator]').click();page.locator('#manageUsernameBtn').click()
     form=page.locator('#usernameForm');form.locator('[name=username]').fill('enterprise.renamed.evaluator');form.locator('button').click();expect(page.locator('#modal')).to_be_hidden()
     assert api.profile('evaluator')['username']=='enterprise.renamed.evaluator'
@@ -82,6 +92,12 @@ try:
     assert len(reader.pages)>=1
     if key in ['CMC','CPP']:assert len(reader.pages)>1,key+' should paginate full criteria'
     assert info.value.suggested_filename.endswith('.pdf')
+    if key=='TQ':
+     with page.expect_download() as csv_info:page.locator('#exportEventBtn').click()
+     raw=list(csv.DictReader(Path(csv_info.value.path()).open()))
+     timed=next(r for r in raw if r['criterion_id']==s['timers'][0]['linkedItemId'])
+     clocks=json.loads(timed['clinical_timers_json'])
+     assert clocks[0]['max_ms']==60000 and clocks[0]['instances'][0]['finalDurationMs']==60001
     page.locator('#homeBrand').click()
    print('PASS: real searchable PDFs include full criteria, failures and Unicode across all 8 modules',flush=True)
    page.locator('[data-event="event-NPA"]').click()
@@ -104,6 +120,8 @@ try:
    with page.expect_download() as info:page.locator('#downloadPreparedCsvBtn').click()
    data=list(csv.DictReader(Path(info.value.path()).open()));assert {'assessment_type','comment','evaluation_id'}<=set(data[0]);assert {r['skill_id'] for r in data}==set(fixture['skills'])
    assert {r['assessment_type'] for r in data}=={'baseline','pre','post'}
+   timed=next(r for r in data if r['criterion_id']==fixture['skills']['TQ']['timers'][0]['linkedItemId'])
+   assert json.loads(timed['clinical_timers_json'])[0]['instances'][0]['finalDurationMs']==60001
    page.locator('#modalClose').click()
    # Fresh synchronized exports must stop offline, while local backups remain possible.
    ctx.set_offline(True);before=len(alerts);page.locator('#recordPdfBtn').click();page.wait_for_function('document.querySelector("#toast")!==null')
