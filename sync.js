@@ -53,9 +53,21 @@ async function api(path,options={}){
  return body;
 }
 
-async function signIn(email,password){
+async function signIn(identifier,password){
  if(!configured())throw new Error('FieldReady backend is not configured.');
- const r=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});
+ identifier=String(identifier||'').trim().toLowerCase();
+ let r;
+ if(identifier.includes('@')){
+  // Keep existing accounts accessible while the NUC username migration rolls out.
+  r=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:identifier,password})});
+ }else{
+  const res=await fetch(CFG.url.replace(/\/$/,'')+'/functions/v1/'+(CFG.functions?.login||'fieldready-login'),{
+   method:'POST',headers:{apikey:CFG.anonKey,Authorization:'Bearer '+CFG.anonKey,'Content-Type':'application/json'},
+   body:JSON.stringify({username:identifier,password})
+  });
+  try{r=await res.json();}catch{r=null;}
+  if(!res.ok)throw new Error(r?.message||(res.status===404?'Username sign-in is not installed yet. Use your account email for now.':'Unable to sign in.'));
+ }
  if(!r?.access_token)throw new Error('No access token returned.');
  setSession({access_token:r.access_token,refresh_token:r.refresh_token,expires_at:r.expires_at||((Date.now()/1000)+Number(r.expires_in||3600)),user:r.user?{id:r.user.id,email:r.user.email}:null});
  try{
@@ -115,7 +127,7 @@ async function requestAccount({email,password,displayName,majcom,installationId}
 
 async function currentProfile(){
  const s=session();if(!s?.user?.id)return null;
- const rows=await api('/rest/v1/'+CFG.tables.profiles+'?user_id=eq.'+encodeURIComponent(s.user.id)+'&select=user_id,email,display_name,active,role',{method:'GET'});
+ const rows=await api('/rest/v1/'+CFG.tables.profiles+'?user_id=eq.'+encodeURIComponent(s.user.id)+'&select=*',{method:'GET'});
  return rows?.[0]||null;
 }
 async function currentMembership(){
@@ -144,7 +156,7 @@ async function listAccountAdministration(){
  const p=await currentProfile();
  if(!p?.active||p.role!=='enterprise')throw new Error('Enterprise access required.');
  const [profiles,memberships,requests]=await Promise.all([
-  api('/rest/v1/'+CFG.tables.profiles+'?select=user_id,email,display_name,active,role,created_at,updated_at&order=display_name.asc',{method:'GET'}),
+  api('/rest/v1/'+CFG.tables.profiles+'?select=*&order=display_name.asc',{method:'GET'}),
   api('/rest/v1/'+CFG.tables.memberships+'?select=id,user_id,scope_type,scope_value,created_at',{method:'GET'}),
   api('/rest/v1/'+CFG.tables.accountRequests+'?select=id,user_id,email,display_name,requested_role,majcom,installation_id,status,decision_note,created_at,reviewed_at&order=created_at.desc',{method:'GET'})
  ]);
@@ -165,6 +177,7 @@ async function denyAccountRequest(requestId,note=''){
 async function setUserAccess(userId,active,role,scopeType=null,scopeValue=null){
  return rpc('fr_set_user_access',{p_user_id:userId,p_active:!!active,p_role:role,p_scope_type:scopeType,p_scope_value:scopeValue});
 }
+async function setUsername(userId,username){return rpc('fr_set_username',{p_user_id:userId,p_username:username});}
 async function managerTeam(){return rpc('fr_manager_team',{});}
 async function appointEvaluator(userId,majcom=null){return rpc('fr_appoint_evaluator',{p_evaluator_id:userId,p_majcom:majcom});}
 async function removeAppointedEvaluator(userId,majcom=null){return rpc('fr_remove_appointed_evaluator',{p_evaluator_id:userId,p_majcom:majcom});}
@@ -513,7 +526,7 @@ function init(opts={}){
 window.FieldReadySync=Object.freeze({
  cachedUserId,captureBaseline,init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,dataEpoch,
- approveAccountRequest,denyAccountRequest,setUserAccess,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
+ approveAccountRequest,denyAccountRequest,setUserAccess,setUsername,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
  syncNow,noteLocalChange,pauseAutoSync,resumeAutoSync
 });
 })();

@@ -25,6 +25,37 @@ function harness(fetch,profile={user_id:'test-user',active:true,role:'enterprise
 }
 const response=body=>({ok:true,text:async()=>JSON.stringify(body)});
 
+test('username sign-in uses the public login function and retains the native account identity',async()=>{
+ const calls=[];
+ const h=harness(async(url,options)=>{
+  calls.push({url,...options});
+  return {ok:true,json:async()=>({access_token:'native-token',refresh_token:'native-refresh',user:{id:'test-user'}})};
+ });
+ await h.sync.signIn(' Nurse.One ','password');
+ assert.equal(calls[0].url,'https://example.invalid/functions/v1/fieldready-login');
+ assert.deepEqual(JSON.parse(calls[0].body),{username:'nurse.one',password:'password'});
+ assert.equal(calls[0].headers.Authorization,'Bearer public');
+ assert.equal(h.sync.session().user.id,'test-user');
+});
+
+test('existing email sign-in remains available before username deployment',async()=>{
+ const calls=[];
+ const h=harness(async(url,options)=>{
+  calls.push({url,...options});
+  return response({access_token:'native-token',user:{id:'test-user'}});
+ });
+ await h.sync.signIn(' Nurse@Example.Invalid ','password');
+ assert.ok(calls[0].url.endsWith('/auth/v1/token?grant_type=password'));
+ assert.deepEqual(JSON.parse(calls[0].body),{email:'nurse@example.invalid',password:'password'});
+});
+
+test('missing username function leaves signed-out users on the login gate with email fallback guidance',async()=>{
+ const h=harness(async()=>({ok:false,status:404,json:async()=>({})}));
+ await h.sync.signOut();
+ await assert.rejects(h.sync.signIn('nurse.one','password'),/Use your account email/);
+ assert.equal(h.sync.session(),null);
+});
+
 test('table reads continue through server-capped short pages without losing records',async()=>{
  const calls=[];
  const h=harness(async url=>{

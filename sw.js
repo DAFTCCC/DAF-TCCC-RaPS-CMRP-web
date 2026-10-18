@@ -1,4 +1,4 @@
-const CACHE='fieldready-study-v4.4.1';
+const CACHE='fieldready-study-v4.5.0';
 
 const ASSETS=[
   './',
@@ -12,6 +12,10 @@ const ASSETS=[
   './raps-skills.js',
   './sync.js',
   './app.js',
+  './reports.js',
+  './assets/vendor/pdf-lib.min.js',
+  './assets/vendor/fontkit.min.js',
+  './assets/vendor/report-font.ttf',
   './study.js',
   './manifest.webmanifest',
   './assets/icon.svg'

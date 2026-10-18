@@ -54,6 +54,7 @@ function setAccountUi(profile,membership=null){
  currentAccessProfile=profile||null;
  currentAccessMembership=membership||null;
  const role=profile?.role||'';
+ $('accountBtn').classList.toggle('hidden',!profile?.active||WARNING_ONLY);
  const admin=$('adminBtn');
  if(admin){
   admin.classList.toggle('hidden',!['program_manager','majcom_manager','enterprise'].includes(role));
@@ -274,7 +275,7 @@ async function renderAdmin(){
 
   const activeProfiles=(data.profiles||[]).filter(p=>p.active);
   const inactiveProfiles=(data.profiles||[]).filter(p=>!p.active);
-  const userRow=p=>{const m=memberships.get(p.user_id);const scope=m?(m.scope_type==='majcom'?commandName(m.scope_value):(installation(m.scope_value)?.name||m.scope_value)):'Enterprise / event assignment';return `<tr><td><b>${esc(p.display_name||'—')}</b><div class="tiny">${esc(p.email||p.user_id)}</div></td><td>${esc(p.role)}</td><td>${esc(scope)}</td><td><span class="status ${p.active?'pass':'fail'}">${p.active?'ACTIVE':'REMOVED'}</span></td><td><button class="btn ghost compactBtn" data-edit-user="${p.user_id}">Manage</button></td></tr>`;};
+  const userRow=p=>{const m=memberships.get(p.user_id);const scope=m?(m.scope_type==='majcom'?commandName(m.scope_value):(installation(m.scope_value)?.name||m.scope_value)):'Enterprise / event assignment';return `<tr><td><b>${esc(p.display_name||'—')}</b><div class="tiny">${esc(p.email||p.user_id)}</div><div class="tiny">Username: ${esc(p.username||'Setup pending')}</div></td><td>${esc(p.role)}</td><td>${esc(scope)}</td><td><span class="status ${p.active?'pass':'fail'}">${p.active?'ACTIVE':'REMOVED'}</span></td><td><button class="btn ghost compactBtn" data-edit-user="${p.user_id}">Manage</button></td></tr>`;};
   $('accountUsersTable').innerHTML=activeProfiles.length?`<table class="dataTable"><thead><tr><th>User</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${activeProfiles.map(userRow).join('')}</tbody></table>`:'<div class="empty">No active FieldReady users found.</div>';
   if(inactiveProfiles.length)$('accountUsersTable').innerHTML+=`<details><summary>Removed access (${inactiveProfiles.length})</summary><table class="dataTable"><thead><tr><th>User</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${inactiveProfiles.map(userRow).join('')}</tbody></table></details>`;
 
@@ -304,8 +305,8 @@ function openApproveRequest(r){
 function openManageUser(p,membership){
  if(!p)return;
  const evaluatorScope=p.role==='evaluator'?`<label class="full"><span>Authorize evaluator for MAJCOM</span><select id="evaluatorMajcomSelect"><option value="">Select MAJCOM</option>${LOC.commands.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>`:'';
- openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active?'checked':''}> Account active</label>${evaluatorScope}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button>${p.role==='evaluator'?'<button id="authorizeEvaluatorMajcomBtn" class="btn ghost" type="button">Authorize MAJCOM</button>':''}${p.user_id!==SYNC.session()?.user?.id?'<button id="removeUserAccessBtn" class="btn danger ghost" type="button">Remove access</button>':''}</div></form>`);
- const form=$('manageAccountForm');wireAdminRoleScope(form,membership);
+ openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active?'checked':''}> Account active</label>${evaluatorScope}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button><button id="manageUsernameBtn" class="btn ghost" type="button">Set username</button>${p.role==='evaluator'?'<button id="authorizeEvaluatorMajcomBtn" class="btn ghost" type="button">Authorize MAJCOM</button>':''}${p.user_id!==SYNC.session()?.user?.id?'<button id="removeUserAccessBtn" class="btn danger ghost" type="button">Remove access</button>':''}</div></form>`);
+ const form=$('manageAccountForm');wireAdminRoleScope(form,membership);$('manageUsernameBtn').onclick=()=>openUsernameSettings(p);
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{await SYNC.setUserAccess(p.user_id,fd.get('active')==='on',fd.get('role'),fd.get('scopeType')||null,fd.get('scopeValue')||null);closeModal();toast('User access updated.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to update access.');}};
  const authBtn=$('authorizeEvaluatorMajcomBtn');
  if(authBtn)authBtn.onclick=async()=>{const maj=$('evaluatorMajcomSelect')?.value||'';if(!maj){alert('Select a MAJCOM first.');return;}authBtn.disabled=true;try{await SYNC.appointEvaluator(p.user_id,maj);toast('Evaluator authorized for '+commandName(maj)+'.');}catch(ex){alert(ex?.message||'Unable to authorize evaluator.');}finally{authBtn.disabled=false;}};
@@ -318,7 +319,25 @@ function openInviteUser(){
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),err=$('inviteAccountError'),btn=form.querySelector('button[type="submit"]');err.classList.add('hidden');btn.disabled=true;try{await SYNC.inviteUser({email:fd.get('email'),displayName:fd.get('displayName'),role:fd.get('role'),scopeType:fd.get('scopeType')||null,scopeValue:fd.get('scopeValue')||null});closeModal();toast('Invitation sent and FieldReady access provisioned.');renderAdmin();}catch(ex){err.textContent=ex?.message||'Unable to send invitation.';err.classList.remove('hidden');}finally{btn.disabled=false;}};
 }
 
-function download(name,text,type='text/plain'){const blob=new Blob([text],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},0);}
+function download(name,data,type='text/plain'){const blob=data instanceof Blob?data:new Blob([data],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},30000);}
+
+function openUsernameSettings(profile=currentAccessProfile){
+ if(!profile?.active||!SYNC?.session?.())return;
+ if(!Object.hasOwn(profile,'username')){
+  openModal('Username setup pending','<p>The NUC username update has not been installed yet. Continue signing in with your account email until the administrator completes setup.</p>');return;
+ }
+ openModal('FieldReady username',`<p>${esc(profile.display_name||'FieldReady account')}</p><p>Your password, role, assignments, and synchronized records stay linked to this account. Your email remains associated with the account for invitations and recovery.</p><form id="usernameForm"><label><span>Username</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9._\\-]{2,47}" value="${esc(profile.username||'')}" required></label><p class="tiny">3–48 letters, numbers, periods, underscores or hyphens. Usernames are case-insensitive.</p><div id="usernameError" class="accessError hidden" role="alert"></div><button class="btn primary" type="submit">Save username</button></form>`);
+ const form=$('usernameForm');
+ form.onsubmit=async e=>{
+  e.preventDefault();const btn=form.querySelector('button'),error=$('usernameError');btn.disabled=true;error.classList.add('hidden');
+  try{
+   const username=await SYNC.setUsername(profile.user_id,new FormData(form).get('username'));
+   if(profile.user_id===currentAccessProfile?.user_id){currentAccessProfile.username=username;$('accessEmail').value=username;}
+   closeModal();toast('Username saved. Use it with your existing password.');
+   if(document.querySelector('#adminView.active'))renderAdmin();
+  }catch(ex){error.textContent=ex?.message||'Unable to save username.';error.classList.remove('hidden');btn.disabled=false;}
+ };
+}
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
 function eventClosed(e=event()){return !!e?.closedAt;}
 function canManageEventLifecycle(){return WARNING_ONLY||['program_manager','majcom_manager','enterprise'].includes(currentAccessProfile?.role||'');}
@@ -411,7 +430,9 @@ document.querySelectorAll('[data-open-measure]').forEach(b=>b.onclick=()=>{const
  $('criterionComparison').innerHTML=items.length?`<table class="dataTable comparisonTable"><thead><tr><th>Criterion</th>${times.map(t=>`<th>${t==='baseline'?'Baseline':t==='3-month'?'3-Month':'6-Month'}</th>`).join('')}</tr></thead><tbody>${items.map(i=>`<tr><td><b>${esc(i.id)}</b>${i.critical?' <span class="critBadge">CRITICAL</span>':''}${i.provenance==='daf'?' <span class="status">DAF Supplemental</span>':''}<div class="tiny">${esc(i.text)}</div></td>${times.map(t=>{const ev=picked[t]?.ev,r=ev?.ratings?.[i.id]||'',d=ev?.failureDetails?.[i.id];return `<td><span class="compareRating ${ratingClass(r)}">${ratingLabel(r)}</span>${r==='fail'&&d?`<div class="tiny">${esc(d.modeLabel||'')}<br>${esc(d.contributorLabel||'')}</div>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody></table>`:'<div class="empty">No criteria match this comparison filter.</div>';
  $('exportRecordBtn').onclick=()=>refreshForExport(exportLongitudinalRecord);
 }
-function exportLongitudinalRecord(){const rows=recordRows(),headers=['participant_id','skill_id','timepoint','date','event','study_arm','majcom','installation','final_result','score_percent','critical_fail_count','assessment_stopwatch_seconds','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor'];const out=[headers];rows.filter(r=>r.ev).forEach(r=>{const sc=scoring(r.ev,r.s);itemsForSkill(r.s).forEach(i=>{const d=r.ev.failureDetails?.[i.id]||{};out.push([r.p.participantId,r.e.skillId,r.e.timepoint,r.e.date,r.e.name,r.e.studyArm,r.e.majcom,eventHomeName(r.e),r.ev.finalResult||'',sc.percent==null?'':(sc.percent*100).toFixed(1),sc.criticalFail,r.ev.stopwatch?.completed?Math.round((r.ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.text,i.critical?'Y':'N',r.ev.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'']);});});download(`FieldReady_${safeName(rows[0]?.p.participantId||'Participant')}_Longitudinal.csv`,out.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');}
+function longitudinalCsvText(rows=recordRows()){const headers=['participant_id','skill_id','timepoint','date','event','study_arm','majcom','installation','final_result','score_percent','critical_fail_count','assessment_stopwatch_seconds','criterion_id','criterion_text','critical','rating','failure_mode','primary_contributor','comment','event_id','roster_record_id','evaluation_id','assessment_type','assessment_date','finalized_at','skill_source','evaluator_id','assigned_arm','initial_training_date'];const out=[headers];rows.filter(r=>r.ev).forEach(r=>{const sc=scoring(r.ev,r.s);itemsForSkill(r.s).forEach(i=>{const d=r.ev.failureDetails?.[i.id]||{};out.push([r.p.participantId,r.e.skillId,r.e.timepoint,r.e.date,r.e.name,r.e.studyArm,r.e.majcom,eventHomeName(r.e),r.ev.finalResult||'',sc.percent==null?'':(sc.percent*100).toFixed(1),sc.criticalFail,r.ev.stopwatch?.completed?Math.round((r.ev.stopwatch.elapsedMs||0)/1000):'',i.id,i.text,i.critical?'Y':'N',r.ev.ratings?.[i.id]||'',d.modeLabel||'',d.contributorLabel||'',d.comment||'',r.e.id,r.p.id,r.ev.id||'',r.ev.assessment?.phase||'unclassified',r.ev.assessment?.date||'',r.ev.finalizedAt?new Date(r.ev.finalizedAt).toISOString():'',r.ev.skillSource||r.s.source,r.ev.evaluatorId||'',r.p.enrollment?.arm||'',r.p.enrollment?.trainingDate||'']);});});return out.map(r=>r.map(csvCell).join(',')).join('\n');}
+function recordCsvFileName(rows=recordRows()){return `FieldReady_${safeName(rows[0]?.p.participantId||'Participant')}_Longitudinal.csv`;}
+function exportLongitudinalRecord(){download(recordCsvFileName(),longitudinalCsvText(),'text/csv');}
 function renderStudyRecord(rows){
  const en=STUDY.enrollment(rows),value=en.value;
  const exposures=STUDY.exposures(rows);
@@ -842,10 +863,83 @@ function eventCsvFileName(e=event()){return `FieldReady_${safeName(e.name)}_${e.
 async function refreshForExport(action){
  try{
   if(!WARNING_ONLY)await SYNC.syncNow(undefined,{requireFresh:true});
-  action();
+  await action();
  }catch(ex){alert('Export paused: '+(ex?.message||ex));}
 }
 function exportEventCsv(){const e=event();download(eventCsvFileName(e),eventCsvText(e),'text/csv');}
+
+function assessmentReportSection({e,p,ev,s}){
+ const score=ev?scoring(ev,s):null;
+ const lines=[
+  `Event: ${e.name} · ${e.date} · ${e.majcom} · ${eventHomeName(e)}`,
+  `Skill: ${e.skillId} · ${s.name} · Source: ${ev?.skillSource||s.source}`,
+  `Timepoint: ${e.timepoint} · Assessment: ${STUDY.phases[ev?.assessment?.phase]||'Unclassified'} · Actual date: ${ev?.assessment?.date||'Not recorded'}`,
+  `Status: ${ev?.finalizedAt?'FINALIZED '+ev.finalResult:ev?'IN PROGRESS — provisional':'NOT STARTED'}`,
+  `Score: ${score?.percent==null?'Not measured':pct(score.percent)} · Critical failures: ${score?.criticalFail??'Not measured'}`,
+  `Stopwatch: ${ev?.stopwatch?.completed?fmtMs(ev.stopwatch.elapsedMs):'Not completed'} · Evaluator ID: ${ev?.evaluatorId||'Not recorded'}`,
+  `Scenario version: ${ev?.scenarioVersion||e.scenarioVersion||'Not recorded'} · Assessment app version: ${ev?.appVersion||'Not recorded'}`,
+  `Assigned arm: ${p.enrollment?.arm||'Not recorded'} · Event arm: ${e.studyArm} · Initial training date: ${p.enrollment?.trainingDate||'Not recorded'}`,
+  `Event ID: ${e.id}\nRoster ID: ${p.id}\nEvaluation ID: ${ev?.id||'Not started'}`
+ ];
+ if(ev?.finalizedAt)lines.push(`Finalized: ${new Date(ev.finalizedAt).toISOString()}`);
+ allItems(s).forEach(i=>{
+  const detail=ev?.failureDetails?.[i.id];
+  lines.push(`${i.id}${i.critical?' [CRITICAL]':''} · ${ratingLabel(ev?.ratings?.[i.id])} · ${i.text}`);
+  if(detail)lines.push(`Failure mode: ${detail.modeLabel||detail.mode||'Not classified'} · Contributor: ${detail.contributorLabel||detail.contributor||'Not classified'}\nComment: ${detail.comment||'None'}`);
+ });
+ for(const timer of s.timers||[]){
+  const stored=ev?.timers?.[timer.id];
+  if(stored)lines.push(`Timer ${timer.label||timer.id} (${timer.standard||''}): ${JSON.stringify(stored)}`);
+ }
+ if(ev?.notes||ev?.overallNotes)lines.push('Evaluator notes: '+(ev.notes||ev.overallNotes));
+ return {heading:`Participant ${p.participantId} · ${e.skillId} · ${e.timepoint}`,lines};
+}
+let preparingExport=false;
+function exportFiles(kind,action){
+ if(preparingExport){toast('Preparing files…');return;}
+ const target=kind==='event'?currentEventId:currentRecordKey;
+ const owner=SYNC?.session?.()?.user?.id;
+ const stillAuthorized=()=>WARNING_ONLY||(SYNC?.session?.()?.user?.id===owner&&currentAccessProfile?.active);
+ preparingExport=true;
+ toast('Preparing files…');
+ return refreshForExport(async()=>{
+  if(!stillAuthorized()||target!==(kind==='event'?currentEventId:currentRecordKey))throw new Error('The account or selected record changed. Retry from the record you want to export.');
+  const source=kind==='event'?event():null;
+  const rows=(kind==='event'?source.participants.map(p=>({e:source,p,ev:p.evaluation,s:SKILLS[source.skillId]})):recordRows()).map(r=>deep({...r,e:{...r.e,participants:undefined}}));
+  if(!rows.length)throw new Error('There are no participant records to export.');
+  const csvName=kind==='event'?eventCsvFileName(source):recordCsvFileName(rows);
+  const csv=kind==='event'?eventCsvText(source):longitudinalCsvText(rows);
+  const title=kind==='event'?`Study event: ${source.name}`:`Participant ${rows[0].p.participantId} — longitudinal record`;
+  const sections=rows.slice().sort((a,b)=>String(a.ev?.assessment?.date||a.e.date).localeCompare(String(b.ev?.assessment?.date||b.e.date))).map(assessmentReportSection);
+  if(kind==='record'){
+   const enrollment=STUDY.enrollment(rows);
+   const context={enrollment:enrollment.value,issues:enrollment.issue?[enrollment.issue]:[],exposures:STUDY.exposures(rows)};
+   sections.push({heading:'Enrollment and dated training exposures',lines:[
+    `Enrollment ID: ${context.enrollment?.id||'Not recorded'} · Assigned arm: ${context.enrollment?.arm||'Not recorded'}`,
+    `Enrolled: ${context.enrollment?.enrolledDate||'Not recorded'} · Initial training date: ${context.enrollment?.trainingDate||'Not recorded'}`,
+    ...(context.issues||[]).map(issue=>'Data issue: '+issue),
+    ...(context.exposures.length?context.exposures.map(x=>`${x.date} · ${x.skillId} · ${x.type} · Minutes: ${x.minutes} · Repetitions: ${x.repetitions} · Coaching events: ${x.coachingEvents} · Trials to mastery: ${x.trialsToMastery??'Not measured'}\nExposure ID: ${x.id} · Notes: ${x.notes||'None'}`):['No dated training exposures recorded.'])
+   ]});
+  }
+  const blob=await window.FieldReadyReports.buildPdf({title,subtitle:'Current assessments and criterion ratings; voided attempts are retained separately in backups.',sections,version:BUILD.versionName});
+  if(!stillAuthorized())throw new Error('Account changed while preparing files. Sign in and export again.');
+  const pdfName=csvName.replace(/\.csv$/,'.pdf');
+  if(action==='pdf'){download(pdfName,blob);return;}
+  const files=[new File([csv],csvName,{type:'text/csv'}),new File([blob],pdfName,{type:'application/pdf'})];
+  const supported=window.FieldReadyReports.canShare(files);
+  openModal('Share files',`<p>${esc(title)}</p><p>${WARNING_ONLY?'Prepared from local testing records':'Prepared from the latest successful synchronization'}. Both files contain study records.</p><ul>${files.map(f=>`<li>${esc(f.name)}</li>`).join('')}</ul><p>${supported?'Open your device’s share sheet, then select an app that accepts file attachments.':'This browser cannot share these files directly. Download them below and attach them in your email or files app.'}</p><div class="actionsRow"><button id="sharePreparedBtn" class="btn primary" ${supported?'':'hidden'}>Share files</button><button id="downloadPreparedCsvBtn" class="btn ghost">Download CSV</button><button id="downloadPreparedPdfBtn" class="btn ghost">Download PDF</button></div><div id="shareFilesError" class="accessError hidden" role="alert"></div>`);
+  const allowed=()=>{if(stillAuthorized())return true;closeModal();return false;};
+  $('downloadPreparedCsvBtn').onclick=()=>{if(allowed())download(csvName,files[0]);};
+  $('downloadPreparedPdfBtn').onclick=()=>{if(allowed())download(pdfName,files[1]);};
+  $('sharePreparedBtn').onclick=async()=>{
+   if(!allowed())return;
+   const button=$('sharePreparedBtn'),error=$('shareFilesError');button.disabled=true;error.classList.add('hidden');
+   try{await window.FieldReadyReports.share(files,title);toast('Files handed to your device’s share sheet.');}
+   catch(ex){if(ex?.name!=='AbortError'){error.textContent='Sharing did not complete. Download the files below and attach them in your email or files app.';error.classList.remove('hidden');}}
+   finally{button.disabled=false;}
+  };
+ }).finally(()=>{preparingExport=false;});
+}
 async function closeEvent(){
  if(!canManageEventLifecycle())return;
  try{await SYNC.syncNow(undefined,{requireFresh:true});}catch(ex){alert('Close class paused: '+(ex?.message||ex));return;}
@@ -1034,6 +1128,9 @@ if(WARNING_ONLY){
  document.querySelector('.safeguardCard > p:not(.eyebrow)').textContent='Temporary testing mode: login is disabled. Use synthetic data only. Records stay in this browser and are not synchronized to the study server.';
  setAccountUi(null);syncAccessButton();
 }else handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
+$('accountBtn').onclick=()=>openUsernameSettings();
+$('eventPdfBtn').onclick=()=>exportFiles('event','pdf');$('eventShareBtn').onclick=()=>exportFiles('event','share');
+$('recordPdfBtn').onclick=()=>exportFiles('record','pdf');$('recordShareBtn').onclick=()=>exportFiles('record','share');
 $('versionBadge').textContent=`v${BUILD.versionName}`;$('adminBtn').onclick=renderAdmin;$('inviteUserBtn').onclick=openInviteUser;$('homeBrand').onclick=renderHome;document.querySelectorAll('[data-home]').forEach(b=>b.onclick=renderHome);$('newEventBtn').onclick=()=>showEventForm();$('editEventBtn').onclick=()=>showEventForm(event());$('addParticipantBtn').onclick=()=>showParticipantForm();$('exportEventBtn').onclick=()=>refreshForExport(exportEventCsv);$('closeEventBtn').onclick=closeEvent;$('deleteEventBtn').onclick=deleteEvent;$('backupAllBtn').onclick=backupAll;$('restoreBtn').onclick=()=>$('restoreInput').click();$('restoreInput').onchange=e=>{if(e.target.files[0])restoreAll(e.target.files[0]);e.target.value='';};$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
 $('filterMajcom').onchange=e=>{filters.majcom=e.target.value;filters.base='';renderHomeSilently();};$('filterBase').onchange=e=>{filters.base=e.target.value;renderManagement();};$('filterSkill').onchange=e=>{filters.skill=e.target.value;renderManagement();};$('filterArm').onchange=e=>{filters.arm=e.target.value;renderManagement();};$('filterTime').onchange=e=>{filters.timepoint=e.target.value;renderManagement();};$('resetFiltersBtn').onclick=()=>{filters={majcom:'',base:'',skill:'',arm:'',timepoint:''};renderHomeSilently();};$('managementCsvBtn').onclick=()=>refreshForExport(managementSummaryCsv);$('enterpriseCsvBtn').onclick=()=>refreshForExport(enterpriseCsv);
 $('backRosterBtn').onclick=safeBackFromEvaluation;$('backParticipantsBtn').onclick=renderHome;$('sectionSelect').onchange=e=>{currentSection=Number(e.target.value);renderCriteria();};$('prevSectionBtn').onclick=()=>{if(currentSection>0){currentSection--;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextSectionBtn').onclick=()=>{if(currentSection<skill().sections.length-1){currentSection++;renderCriteria();$('sectionSelect').value=String(currentSection);}};$('nextUnresolvedBtn').onclick=nextUnresolved;$('evalName').onchange=e=>{if(getEval()?.finalizedAt||eventClosed())return;getEval().evaluatorName=e.target.value;saveDb();};$('evalId').onchange=e=>{if(getEval()?.finalizedAt||eventClosed())return;getEval().evaluatorId=e.target.value;saveDb();};$('overallNotes').onchange=e=>{if(getEval()?.finalizedAt||eventClosed())return;getEval().notes=e.target.value;saveDb();};$('reviewFinalizeBtn').onclick=reviewFinalize;$('voidAttemptBtn').onclick=voidAttempt;

@@ -15,6 +15,7 @@ window.FIELDREADY_BACKEND = Object.freeze({
     accountRequests: 'fr_account_requests'
   }),
   functions: Object.freeze({
+    login: 'fieldready-login',
     accountAdmin: 'fieldready-account-admin'
   }),
   autoSyncDelayMs: 1500

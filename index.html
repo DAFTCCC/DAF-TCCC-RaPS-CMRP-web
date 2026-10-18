@@ -23,7 +23,8 @@
       <div><b>Research measurement</b><span>Formal evaluations are measurement events. Do not coach, cue, teach, or remediate during the scored encounter.</span></div>
     </div>
     <div class="accessGate">
-      <label><span>FieldReady account email</span><input id="accessEmail" type="email" autocomplete="username" placeholder="name@example.com"></label>
+      <label><span>FieldReady username</span><input id="accessEmail" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Enter username" aria-describedby="usernameHelp"></label>
+      <p id="usernameHelp" class="tiny">Existing users can also sign in with their account email, then choose a username in Account.</p>
       <label><span>FieldReady password</span><input id="accessPassword" type="password" autocomplete="current-password" placeholder="Enter password"></label>
       <div id="accessError" class="accessError hidden" role="alert">Unable to sign in.</div>
     </div>
@@ -44,6 +45,7 @@
     <button id="syncStatusBtn" class="syncPill local" type="button" title="Synchronization status">LOCAL ONLY</button>
     <span id="versionBadge" class="versionBadge">v—</span>
     <button id="adminBtn" class="btn ghost hidden" type="button">Users</button>
+    <button id="accountBtn" class="btn ghost hidden" type="button">Account</button>
     <button id="backupAllBtn" class="btn ghost">Backup</button>
     <button id="restoreBtn" class="btn ghost">Restore</button>
     <button id="lockBtn" class="btn ghost">Lock</button>
@@ -126,7 +128,7 @@
     <button class="backLink" data-home>← All Study Events</button>
     <div class="hero compact">
       <div><p id="eventKicker" class="eyebrow"></p><h1 id="eventTitle"></h1><p id="eventSub" class="sub"></p></div>
-      <div class="heroBtns"><button id="editEventBtn" class="btn ghost">Edit Event</button><button id="exportEventBtn" class="btn ghost">Export Event CSV</button><button id="closeEventBtn" class="btn primary">Close Class</button><button id="deleteEventBtn" class="btn danger ghost hidden">Delete Class</button></div>
+      <div class="heroBtns"><button id="editEventBtn" class="btn ghost">Edit Event</button><button id="exportEventBtn" class="btn ghost">Download CSV</button><button id="eventPdfBtn" class="btn ghost">Download PDF</button><button id="eventShareBtn" class="btn ghost">Share files</button><button id="closeEventBtn" class="btn primary">Close Class</button><button id="deleteEventBtn" class="btn danger ghost hidden">Delete Class</button></div>
     </div>
     <div id="eventMeta" class="metaGrid"></div>
 
@@ -147,7 +149,7 @@
     <button class="backLink" id="backParticipantsBtn">← Study Dashboard</button>
     <div class="hero compact">
       <div><p class="eyebrow">LONGITUDINAL STUDY RECORD</p><h1 id="recordTitle"></h1><p id="recordSub" class="sub"></p></div>
-      <div class="heroBtns"><button id="exportRecordBtn" class="btn ghost">Export Longitudinal CSV</button></div>
+      <div class="heroBtns"><button id="exportRecordBtn" class="btn ghost">Download CSV</button><button id="recordPdfBtn" class="btn ghost">Download PDF</button><button id="recordShareBtn" class="btn ghost">Share files</button></div>
     </div>
     <section class="panel">
       <div class="panelHead"><div><p class="eyebrow">ASSESSMENT</p><h2>Compare study timepoints</h2></div><select id="recordSkillSelect"></select></div>
@@ -201,6 +203,9 @@
 <script src="raps-skills.js"></script>
 <script src="sync.js"></script>
 <script src="study.js"></script>
+<script src="assets/vendor/pdf-lib.min.js"></script>
+<script src="assets/vendor/fontkit.min.js"></script>
+<script src="reports.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,6 +1,13 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.4.1-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.5.0-study-web
 
-## UI acceptance update — v4.4.1
+## Usernames and file exports — v4.5.0
+
+- Sign in with a username and password after the NUC update. Existing email login remains available. Choose your username in **Account**; Enterprise can rename users from **Users → Manage → Set username**.
+- Event and participant records offer **Download CSV**, **Download PDF**, and **Share files**. Reports include full criteria, failure details, measurement timing, and record identifiers; participant PDFs also include enrollment and dated exposures. The participant criterion CSV now includes assessment phase/date, comments, and stable record identifiers.
+- Sharing prepares actual CSV/PDF attachments and offers downloads when the browser cannot share files. Exports require a successful fresh synchronization; Backup remains available offline. Direct email is deferred.
+- **NUC action required for username login:** install migration 013 and `fieldready-login` using the backed-up deployment script in [NUC_SETUP.md](NUC_SETUP.md#v450-username-login-and-file-exports). The web update alone does not install server code.
+
+## Previous UI acceptance update — v4.4.1
 
 Form saves now survive a background refresh and reject conflicting edits, mobile navigation stays within the viewport, manual sync preserves the current view, and cancelling an account denial leaves the request pending. Login and modal keyboard access is contained. See `UI_ACCEPTANCE.md` for role-by-role test coverage and live NUC checks still outstanding.
 
@@ -10,7 +17,7 @@ Role-based Supabase login is enabled. Evaluators grade assigned events; Program 
 
 **Existing FieldReady databases:** apply `supabase/012_add_raps_skill_modules.sql` before creating ASM/CLS/CPP events. It extends the event skill allowlist without changing RLS. The web update cannot apply database migrations.
 
-Authorized data refreshes on login, window focus, periodically while idle, and before CSV exports. Changed records use conditional server-revision checks; conflicts preserve pending work instead of overwriting another device. Finish active grading before exporting shared results. Backup remains a local recovery download. See `STUDY_WORKFLOW.md` for study-record semantics and limitations.
+Authorized data refreshes on login, window focus, periodically while idle, and before synchronized CSV/PDF exports and sharing. Changed records use conditional server-revision checks; conflicts preserve pending work instead of overwriting another device. Finish active grading before exporting shared results. Backup remains a local recovery download. See `STUDY_WORKFLOW.md` for study-record semantics and limitations.
 
 Temporary warning-mode test records remain separate from authenticated study data; download them from the synchronization panel if needed. They are never silently uploaded into study records.
 

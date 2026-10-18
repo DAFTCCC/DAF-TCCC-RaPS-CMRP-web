@@ -70,3 +70,19 @@ Apply migration 012 and run a real two-device acceptance exercise in staging: cr
 ## Complete role journeys (v4.4.1)
 
 Run `python3 tests/role_journeys.py` for full administration-to-grading-to-archive workflows through production `sync.js` and a stateful local HTTP-contract test server. See `UI_ACCEPTANCE.md` for the 12 journey groups, the four-role/eight-module browser matrix, corrected defects, reproducibility instructions, and the explicit limits of simulated authorization. GitHub Actions runs all four browser scripts with Playwright 1.62.0.
+
+
+## Username login and file exports (v4.5.0)
+
+`python3 tests/files_browser.py` runs production app/sync code against the local API double. It verifies all four role identities after username changes, Enterprise renaming, full searchable PDFs for all eight modules, clinical symbols and pagination, participant CSV/PDF scope, real CSV/PDF File objects handed to a simulated Web Share API with fresh user activation, cancellation/error/unsupported fallbacks, and the offline export guard. Requires Playwright 1.62.0 and pypdf 6.10.0. Actual device share targets and delivery require device acceptance testing.
+
+`node --test tests/*.cjs` includes the actual Edge Function handler with isolated native-Auth responses, generic invalid-credential errors, rate limits, and unavailable-backend cases. It also checks the browser client's username route and email compatibility.
+
+Run migration checks in an isolated PostgreSQL engine:
+
+```bash
+npm install --prefix /tmp/fieldready-sql-test @electric-sql/pglite@0.3.14 --ignore-scripts --no-audit --no-fund
+node --test tests/username_database.mjs
+```
+
+This executes the real migration twice, checks unique normalized names, owner/Enterprise renames, inactive and anonymous denial, service-only resolution, default names for new users, and persisted per-name/global throttles. It does not verify the live NUC's gateway, GoTrue configuration, mounted functions, or installed RLS. The NUC deployment script's shell syntax is checked locally; its Docker operations must run on the NUC.

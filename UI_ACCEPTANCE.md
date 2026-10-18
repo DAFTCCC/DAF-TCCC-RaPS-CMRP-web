@@ -1,4 +1,4 @@
-# UI acceptance — v4.4.1
+# UI acceptance — v4.5.0
 
 All results below were obtained locally with synthetic records. No real study participants, NUC account mutations, invitations, or production grading writes were used.
 
@@ -45,10 +45,18 @@ python3 tests/role_journeys.py
 python3 tests/roles_browser.py
 python3 tests/study_browser.py
 python3 tests/warning_browser.py
+python3 tests/files_browser.py
 ```
 
-GitHub Actions now runs the four browser suites in addition to the static and Node checks. Local passes do not establish a successful hosted CI run.
+GitHub Actions now runs the five browser suites in addition to the static and Node checks. Local passes do not establish a successful hosted CI run.
 
 ## Live NUC verification still required
 
 The test API models authorization; it does not run PostgreSQL policies, GoTrue, the Edge Runtime, SMTP, or the archive worker on the NUC. SQL migration 012 was confirmed applied from the user's NUC command output. Live role logins, database RLS, actual email delivery, and on-disk archive persistence have not been tested with authenticated NUC accounts in this environment. A staging acceptance run must verify those services using approved accounts and synthetic records before real study collection.
+
+
+## v4.5.0 acceptance additions
+
+Locally passed: four-role username sign-in and rename with the same Auth identity, Enterprise username management, all eight full-criterion PDF downloads parsed with pypdf, Unicode clinical symbols, multipage CMC/CPP, participant enrollment/exposure PDF, aligned longitudinal CSV columns and measurement identifiers, CSV/PDF share attachments with fresh click activation, cancellation and failure fallback, unsupported file-sharing fallback, and offline export blocking. Artifacts are generated under `/tmp/fieldready-file-review`; the mobile participant view was also inspected visually.
+
+The real migration passed in isolated PostgreSQL, including reapplication, permissions and throttling. The login handler passed isolated request tests. This verifies the new database code locally; migration 013 and the new function have **not** been installed or authenticated against the live NUC. Actual phone/tablet sharing and gateway routing remain device/NUC acceptance items. Direct email sending remains deferred.

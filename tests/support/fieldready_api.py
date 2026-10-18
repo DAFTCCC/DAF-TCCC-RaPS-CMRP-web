@@ -15,7 +15,7 @@ class FieldReadyAPI:
   self.tables={name:[] for name in ['fr_events','fr_participants','fr_evaluations','fr_voids','fr_profiles','fr_memberships','fr_account_requests']}
   self.assignments={};self.evaluator_scopes=set();self.pools={};self.calls=[];self.errors=[];self.archives=[]
   for uid,role in [('enterprise','enterprise'),('majcom','majcom_manager'),('program','program_manager'),('evaluator','evaluator'),('unassigned','evaluator'),('candidate','evaluator'),('outsider','evaluator')]:
-   self.tables['fr_profiles'].append({'user_id':uid,'email':uid+'@example.invalid','display_name':uid.title(),'active':True,'role':role})
+   self.tables['fr_profiles'].append({'user_id':uid,'username':uid,'email':uid+'@example.invalid','display_name':uid.title(),'active':True,'role':role})
   self.tables['fr_memberships']=[{'id':'m1','user_id':'majcom','scope_type':'majcom','scope_value':command},{'id':'m2','user_id':'program','scope_type':'installation','scope_value':installation,'parent_scope_value':command}]
   self.evaluator_scopes.add(('evaluator',command))
  def profile(self,uid):return next((p for p in self.tables['fr_profiles'] if p['user_id']==uid),None)
@@ -48,6 +48,11 @@ class FieldReadyAPI:
   uid=headers.get('authorization','').removeprefix('Bearer token-')
   self.calls.append((uid,method,path,copy.deepcopy(body)))
   if method=='OPTIONS':return 200,None
+  if path=='/functions/v1/fieldready-login':
+   profile=next((p for p in self.tables['fr_profiles'] if p.get('username')==body.get('username','').strip().lower() and p['active']),None)
+   if not profile or body.get('password')!='valid-password':raise ApiError(400,'Invalid username or password.')
+   uid=profile['user_id']
+   return 200,{'access_token':'token-'+uid,'refresh_token':'refresh-'+uid,'expires_at':time.time()+3600,'user':{'id':uid,'email':profile['email']}}
   if path=='/auth/v1/token':
    uid=body.get('email','').split('@')[0]
    if body.get('password')!='valid-password' or not self.profile(uid):raise ApiError(400,'Invalid login credentials')
@@ -99,6 +104,12 @@ class FieldReadyAPI:
  def rpc(self,uid,name,body):
   p=self.profile(uid);role=p['role'];member=self.membership(uid)
   if name=='fr_get_data_epoch':return 'test-epoch'
+  if name=='fr_set_username':
+   target=self.profile(body['p_user_id']);username=body['p_username'].strip().lower()
+   if uid!=target['user_id'] and role!='enterprise':raise ApiError(403,'Account owner or Enterprise access required.')
+   if any(x.get('username')==username and x!=target for x in self.tables['fr_profiles']):raise ApiError(409,'This username is unavailable. Choose another.')
+   target['username']=username
+   return username
   if name=='fr_manager_team':
    if not self.manager(uid):raise ApiError(403,'Manager required')
    candidates=[copy.deepcopy(p) for p in self.tables['fr_profiles'] if p['active'] and p['role']=='evaluator']

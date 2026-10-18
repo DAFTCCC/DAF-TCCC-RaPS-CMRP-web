@@ -1,5 +1,5 @@
 window.FIELDREADY_BUILD = Object.freeze({
-  versionName: '4.4.1-study-web',
+  versionName: '4.5.0-study-web',
   buildDate: '2026-10-17',
   baseline: 'DAF-TCCC-RaPS-WEB v3.4.11 evaluator timing / field-hardening model + FieldReady longitudinal study workflow',
   study: 'FieldReady Longitudinal Competency Study',
