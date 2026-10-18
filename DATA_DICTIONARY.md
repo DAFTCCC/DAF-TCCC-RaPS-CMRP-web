@@ -101,3 +101,10 @@ Local `_serverRevision` and `_syncBaseline` fields record the server version and
 Event, longitudinal criterion and Enterprise Detail CSVs append `clinical_timers_json`. Each criterion row contains an array of its source-linked clinical timers, with `timer_id`, `standard`, `grading_clock`, `min_ms`, `max_ms` and the recorded `instances`. Criteria without linked clocks contain `[]`. Instances preserve millisecond durations, start/stop timestamps, pauses, segments, result and void history where recorded. An empty instances array means no clock was recorded; it is not a zero-duration measurement.
 
 This preserves evidence for boundary failures such as 60,001 ms against a ≤60,000 ms standard, which rounded stopwatch seconds alone cannot explain. These are raw timing records; unfinished/recovered instances do not establish a valid completed duration. The existing `assessment_stopwatch_seconds` column remains the overall assessment duration, separate from these clinical clocks.
+
+
+## Account password setup (v4.6.0)
+
+`fr_profiles.password_change_required` marks mandatory replacement. Pending accounts have `active=false`; `password_resume_active` records whether Enterprise intends to activate them after setup. `password_reset_id` is the latest setup nonce, and `temporary_password_expires_at` is the 24-hour activation deadline. These are account control fields, not study outcomes. Default values leave existing accounts unchanged. Password plaintext/hashes are never written to profiles, study tables or exports; native Auth manages its own password hashes.
+
+Service-only RPCs create pending profiles, begin resets, rate-limit setup verification, and activate only a matching unexpired setup. Audit action names are `CREATE_TEMPORARY_ACCOUNT`, `ISSUE_TEMPORARY_PASSWORD`, and `COMPLETE_PASSWORD_CHANGE`, with actor and target IDs and no password. Restrictive study policies and explicit active-account checks on governance RPCs keep pending identities from study operations. Scope memberships and historical evaluations are preserved by password resets.

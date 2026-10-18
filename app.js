@@ -40,6 +40,7 @@ let ticker=null;
 let currentAccessProfile=null,currentAccessMembership=null;
 let gradingSyncLocked=false;
 let signingOut=false;
+let passwordChangePending=false;
 let evalWakeLock=null,evalBackgroundedAt=null;
 
 function scopeOptions(role,majcom='',installationId=''){
@@ -56,6 +57,7 @@ function setAccountUi(profile,membership=null){
  currentAccessMembership=membership||null;
  const role=profile?.role||'';
  $('accountBtn').classList.toggle('hidden',!profile?.active||WARNING_ONLY);
+ $('createTemporaryUserBtn').classList.toggle('hidden',role!=='enterprise');
  const admin=$('adminBtn');
  if(admin){
   admin.classList.toggle('hidden',!['program_manager','majcom_manager','enterprise'].includes(role));
@@ -165,6 +167,7 @@ function openModal(title,html){
  queueMicrotask(()=>layerControls($('modal')).find(el=>el.id!=='modalClose')?.focus());
 }
 function closeModal(){
+ if(passwordChangePending)return;
  $('modal').classList.add('hidden');$('modal').setAttribute('aria-hidden','true');$('modalBody').innerHTML='';
  if(modalReturnFocus?.isConnected)modalReturnFocus.focus();modalReturnFocus=null;
 }
@@ -280,9 +283,9 @@ async function renderAdmin(){
   const pending=(data.requests||[]).filter(r=>r.status==='pending');
   $('accountRequestsTable').innerHTML=pending.length?`<table class="dataTable"><thead><tr><th>Name</th><th>Email</th><th>Requested location</th><th>Requested</th><th></th></tr></thead><tbody>${pending.map(r=>`<tr><td><b>${esc(r.display_name||'—')}</b></td><td>${esc(r.email)}</td><td>${esc(r.majcom||'—')} · ${esc(installation(r.installation_id)?.name||r.installation_id||'—')}</td><td>${r.created_at?esc(new Date(r.created_at).toLocaleString()):'—'}</td><td><div class="actionsRow"><button class="btn primary compactBtn" data-approve-request="${r.id}">Approve</button><button class="btn danger ghost compactBtn" data-deny-request="${r.id}">Deny</button></div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No pending account requests.</div>';
 
-  const activeProfiles=(data.profiles||[]).filter(p=>p.active);
-  const inactiveProfiles=(data.profiles||[]).filter(p=>!p.active);
-  const userRow=p=>{const m=memberships.get(p.user_id);const scope=m?(m.scope_type==='majcom'?commandName(m.scope_value):(installation(m.scope_value)?.name||m.scope_value)):'Enterprise / event assignment';return `<tr><td><b>${esc(p.display_name||'—')}</b><div class="tiny">${esc(p.email||p.user_id)}</div><div class="tiny">Username: ${esc(p.username||'Setup pending')}</div></td><td>${esc(p.role)}</td><td>${esc(scope)}</td><td><span class="status ${p.active?'pass':'fail'}">${p.active?'ACTIVE':'REMOVED'}</span></td><td><button class="btn ghost compactBtn" data-edit-user="${p.user_id}">Manage</button></td></tr>`;};
+  const activeProfiles=(data.profiles||[]).filter(p=>p.active||(p.password_change_required&&p.password_resume_active));
+  const inactiveProfiles=(data.profiles||[]).filter(p=>!p.active&&!(p.password_change_required&&p.password_resume_active));
+  const userRow=p=>{const m=memberships.get(p.user_id);const scope=m?(m.scope_type==='majcom'?commandName(m.scope_value):(installation(m.scope_value)?.name||m.scope_value)):'Enterprise / event assignment';return `<tr><td><b>${esc(p.display_name||'—')}</b><div class="tiny">${esc(p.email||p.user_id)}</div><div class="tiny">Username: ${esc(p.username||'Setup pending')}</div></td><td>${esc(p.role)}</td><td>${esc(scope)}</td><td><span class="status ${p.active?'pass':'fail'}">${p.password_change_required?(p.password_resume_active?'PASSWORD CHANGE':'REMOVED'):p.active?'ACTIVE':'REMOVED'}</span></td><td><button class="btn ghost compactBtn" data-edit-user="${p.user_id}">Manage</button></td></tr>`;};
   $('accountUsersTable').innerHTML=activeProfiles.length?`<table class="dataTable"><thead><tr><th>User</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${activeProfiles.map(userRow).join('')}</tbody></table>`:'<div class="empty">No active FieldReady users found.</div>';
   if(inactiveProfiles.length)$('accountUsersTable').innerHTML+=`<details><summary>Removed access (${inactiveProfiles.length})</summary><table class="dataTable"><thead><tr><th>User</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${inactiveProfiles.map(userRow).join('')}</tbody></table></details>`;
 
@@ -312,8 +315,9 @@ function openApproveRequest(r){
 function openManageUser(p,membership){
  if(!p)return;
  const evaluatorScope=p.role==='evaluator'?`<label class="full"><span>Authorize evaluator for MAJCOM</span><select id="evaluatorMajcomSelect"><option value="">Select MAJCOM</option>${LOC.commands.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>`:'';
- openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active?'checked':''}> Account active</label>${evaluatorScope}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button><button id="manageUsernameBtn" class="btn ghost" type="button">Set username</button>${p.role==='evaluator'?'<button id="authorizeEvaluatorMajcomBtn" class="btn ghost" type="button">Authorize MAJCOM</button>':''}${p.user_id!==SYNC.session()?.user?.id?'<button id="removeUserAccessBtn" class="btn danger ghost" type="button">Remove access</button>':''}</div></form>`);
+ openModal('Manage FieldReady user',`<p><b>${esc(p.display_name||'FieldReady user')}</b><br>${esc(p.email||p.user_id)}</p><form id="manageAccountForm"><div class="formGrid">${adminRoleForm(p.role,membership)}<label class="checkLine full"><input type="checkbox" name="active" ${p.active||p.password_resume_active?'checked':''}> Account active</label>${evaluatorScope}</div><div class="actionsRow spaced"><button class="btn primary" type="submit">Save access</button><button id="manageUsernameBtn" class="btn ghost" type="button">Set username</button>${p.user_id!==SYNC.session()?.user?.id&&(p.active||(p.password_change_required&&p.password_resume_active))?'<button id="resetTemporaryPasswordBtn" class="btn ghost" type="button">Reset temporary password</button>':''}${p.role==='evaluator'?'<button id="authorizeEvaluatorMajcomBtn" class="btn ghost" type="button">Authorize MAJCOM</button>':''}${p.user_id!==SYNC.session()?.user?.id?'<button id="removeUserAccessBtn" class="btn danger ghost" type="button">Remove access</button>':''}</div></form>`);
  const form=$('manageAccountForm');wireAdminRoleScope(form,membership);$('manageUsernameBtn').onclick=()=>openUsernameSettings(p);
+ const passwordBtn=$('resetTemporaryPasswordBtn');if(passwordBtn)passwordBtn.onclick=()=>openTemporaryPasswordReset(p);
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{await SYNC.setUserAccess(p.user_id,fd.get('active')==='on',fd.get('role'),fd.get('scopeType')||null,fd.get('scopeValue')||null);closeModal();toast('User access updated.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to update access.');}};
  const authBtn=$('authorizeEvaluatorMajcomBtn');
  if(authBtn)authBtn.onclick=async()=>{const maj=$('evaluatorMajcomSelect')?.value||'';if(!maj){alert('Select a MAJCOM first.');return;}authBtn.disabled=true;try{await SYNC.appointEvaluator(p.user_id,maj);toast('Evaluator authorized for '+commandName(maj)+'.');}catch(ex){alert(ex?.message||'Unable to authorize evaluator.');}finally{authBtn.disabled=false;}};
@@ -326,10 +330,53 @@ function openInviteUser(){
  form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),err=$('inviteAccountError'),btn=form.querySelector('button[type="submit"]');err.classList.add('hidden');btn.disabled=true;try{await SYNC.inviteUser({email:fd.get('email'),displayName:fd.get('displayName'),role:fd.get('role'),scopeType:fd.get('scopeType')||null,scopeValue:fd.get('scopeValue')||null});closeModal();toast('Invitation sent and FieldReady access provisioned.');renderAdmin();}catch(ex){err.textContent=ex?.message||'Unable to send invitation.';err.classList.remove('hidden');}finally{btn.disabled=false;}};
 }
 
+function passwordSetupInstalled(profile=currentAccessProfile){
+ if(Object.hasOwn(profile||{},'password_change_required'))return true;
+ openModal('Temporary-password setup pending','<p>Install the FieldReady temporary-password update on the NUC before creating or resetting these credentials. Existing email invitations remain available.</p>');return false;
+}
+function showTemporaryCredentials(result){
+ if(!result?.temporaryPassword)throw new Error('The server did not return a temporary password. Refresh Users and retry.');
+ openModal('Temporary password — shown once',`<p>Give these credentials directly to the intended user. They must choose a new password before accessing study records. Complete setup within 24 hours.</p><div class="formGrid"><label class="full"><span>Username</span><input id="issuedUsername" readonly value="${esc(result.username)}" autocomplete="off"></label><label class="full"><span>Temporary password</span><input id="issuedTemporaryPassword" type="password" readonly autocomplete="off"></label></div><p>Setup expires: ${esc(new Date(result.expiresAt).toLocaleString())}</p><div class="actionsRow"><button id="revealTemporaryPasswordBtn" class="btn ghost">Show password</button><button id="copyTemporaryPasswordBtn" class="btn ghost">Copy password</button><button id="dismissTemporaryPasswordBtn" class="btn primary">Done</button></div><p class="tiny">Closing this dialog clears the displayed password. It cannot be retrieved from Users, study records, backups or exports; issue a new one if needed.</p>`);
+ $('issuedTemporaryPassword').value=result.temporaryPassword;
+ $('revealTemporaryPasswordBtn').onclick=()=>{const input=$('issuedTemporaryPassword'),show=input.type==='password';input.type=show?'text':'password';$('revealTemporaryPasswordBtn').textContent=show?'Hide password':'Show password';};
+ $('copyTemporaryPasswordBtn').onclick=async()=>{const input=$('issuedTemporaryPassword');try{await navigator.clipboard.writeText(input.value);toast('Temporary password copied.');}catch{input.type='text';input.select();toast('Select and copy the displayed password.');}};
+ $('dismissTemporaryPasswordBtn').onclick=closeModal;
+}
+function openCreateTemporaryUser(){
+ if(currentAccessProfile?.role!=='enterprise'||!passwordSetupInstalled())return;
+ openModal('Create user with temporary password',`<p>No invitation email is sent. An email remains associated with the account for recovery. A strong temporary password is generated automatically.</p><form id="createTemporaryUserForm"><div class="formGrid"><label><span>Name</span><input name="displayName" required autocomplete="off"></label><label><span>Account email</span><input name="email" type="email" required autocomplete="off"></label><label class="full"><span>Username</span><input name="username" required minlength="3" maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9._\\-]{2,47}" autocapitalize="none" autocomplete="off"></label>${adminRoleForm('evaluator',null,false)}<label id="temporaryParentScope" class="full hidden"><span>Program Manager MAJCOM</span><select name="parentScope"><option value="">Select MAJCOM</option>${LOC.commands.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label></div><div id="createTemporaryUserError" class="accessError hidden" role="alert"></div><button type="submit" class="btn primary">Create & show temporary password</button></form>`);
+ const form=$('createTemporaryUserForm');wireAdminRoleScope(form);
+ form.querySelector('#adminRole').addEventListener('change',()=>{const pm=form.querySelector('#adminRole').value==='program_manager';$('temporaryParentScope').classList.toggle('hidden',!pm);form.querySelector('[name=parentScope]').required=pm;});
+ form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('button[type=submit]'),error=$('createTemporaryUserError');button.disabled=true;error.classList.add('hidden');try{const data=Object.fromEntries(new FormData(form));const result=await SYNC.createTemporaryUser(data);renderAdmin();showTemporaryCredentials(result);}catch(ex){error.textContent=ex?.message||'Unable to create account.';error.classList.remove('hidden');button.disabled=false;}};
+}
+function openTemporaryPasswordReset(profile){
+ if(currentAccessProfile?.role!=='enterprise'||!passwordSetupInstalled())return;
+ openModal('Reset temporary password',`<p><b>${esc(profile.display_name||profile.username)}</b> · ${esc(profile.username||profile.email)}</p><p>The current password will be replaced. Study access pauses until this user chooses a new password. Role, assignments and historical evaluations are preserved.</p><form id="resetTemporaryPasswordForm"><div id="resetTemporaryPasswordError" class="accessError hidden" role="alert"></div><button type="submit" class="btn primary">Issue new temporary password</button></form>`);
+ const form=$('resetTemporaryPasswordForm');form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('button'),error=$('resetTemporaryPasswordError');button.disabled=true;try{const result=await SYNC.resetTemporaryPassword(profile.user_id);renderAdmin();showTemporaryCredentials(result);}catch(ex){error.textContent=ex?.message||'Unable to reset password.';error.classList.remove('hidden');button.disabled=false;}};
+}
+function openRequiredPasswordChange(profile){
+ passwordChangePending=true;gradingSyncLocked=false;SYNC.pauseAutoSync();setAccountUi(null);setAccessGate(true);
+ openModal('Choose your own FieldReady password',`<p>Account: <b>${esc(profile.username||profile.email)}</b></p><p>Change the temporary password before accessing study records. Choose a different password with at least 12 characters.</p><form id="requiredPasswordForm"><div class="formGrid"><label class="full"><span>Current temporary password</span><input name="temporaryPassword" type="password" required autocomplete="current-password"></label><label><span>New password</span><input name="newPassword" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></label><label><span>Confirm new password</span><input name="confirmPassword" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></label></div><div id="requiredPasswordError" class="accessError hidden" role="alert"></div><div class="actionsRow"><button type="submit" class="btn primary">Change password & sign in</button><button id="cancelRequiredPasswordBtn" type="button" class="btn ghost">Sign out</button></div></form>`);
+ $('modalClose').classList.add('hidden');$('cancelRequiredPasswordBtn').onclick=lockFieldReady;
+ const form=$('requiredPasswordForm');form.onsubmit=async e=>{
+  e.preventDefault();const fd=new FormData(form),error=$('requiredPasswordError'),button=form.querySelector('button[type=submit]');error.classList.add('hidden');
+  if(fd.get('newPassword')!==fd.get('confirmPassword')){error.textContent='Passwords do not match.';error.classList.remove('hidden');return;}
+  button.disabled=true;
+  try{
+   await SYNC.completeTemporaryPassword(String(fd.get('temporaryPassword')),String(fd.get('newPassword')));
+   passwordChangePending=false;$('modalClose').classList.remove('hidden');closeModal();
+   await loadCurrentAccess();SYNC.resumeAutoSync();await SYNC.syncNow(db,{requireFresh:true});setAccessGate(false);renderHome();toast('Password changed. FieldReady synchronized.');
+  }catch(ex){
+   if(!passwordChangePending){await lockFieldReady();$('accessError').textContent=ex?.message||'Sign in again with your new password.';$('accessError').classList.remove('hidden');return;}
+   error.textContent=ex?.message||'Unable to change password.';error.classList.remove('hidden');button.disabled=false;
+  }
+ };
+}
+
 function download(name,data,type='text/plain'){const blob=data instanceof Blob?data:new Blob([data],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},30000);}
 
 function openUsernameSettings(profile=currentAccessProfile){
- if(!profile?.active||!SYNC?.session?.())return;
+ if(!profile||!SYNC?.session?.()||(!profile.active&&currentAccessProfile?.role!=='enterprise'))return;
  if(!Object.hasOwn(profile,'username')){
   openModal('Username setup pending','<p>The NUC username update has not been installed yet. Continue signing in with your account email until the administrator completes setup.</p>');return;
  }
@@ -1039,7 +1086,8 @@ async function unlockFieldReady(){
   const password=String($('accessPassword')?.value||'');
   try{
     $('enterBtn').disabled=true;
-    await SYNC.signIn(email,password);
+    const signedIn=await SYNC.signIn(email,password);
+    if(signedIn?.passwordChangeRequired){openRequiredPasswordChange(signedIn.profile);$('accessPassword').value='';return;}
     await loadCurrentAccess();
     await SYNC.syncNow(db,{requireFresh:true});
     setAccessGate(false);
@@ -1058,6 +1106,8 @@ async function unlockFieldReady(){
 async function lockFieldReady(){
   if(signingOut)return;
   signingOut=true;
+  passwordChangePending=false;
+  $('modalClose').classList.remove('hidden');
   // Hide records immediately, including when the logout request is offline.
   setAccessGate(true);
   closeModal();
@@ -1140,6 +1190,8 @@ async function restoreAuthorizedSession(){
   return;
  }
  try{
+  const profile=await SYNC.currentProfile();
+  if(profile?.password_change_required&&profile.password_resume_active){openRequiredPasswordChange(profile);return;}
   await SYNC.requireAuthorizedProfile();
   await loadCurrentAccess();
   await SYNC.syncNow(db,{requireFresh:true});
@@ -1161,6 +1213,7 @@ if(WARNING_ONLY){
  document.querySelector('.safeguardCard > p:not(.eyebrow)').textContent='Temporary testing mode: login is disabled. Use synthetic data only. Records stay in this browser and are not synchronized to the study server.';
  setAccountUi(null);syncAccessButton();
 }else handleAuthCallback().then(handled=>{if(!handled)restoreAuthorizedSession();});
+$('createTemporaryUserBtn').onclick=openCreateTemporaryUser;
 $('accountBtn').onclick=()=>openUsernameSettings();
 $('eventPdfBtn').onclick=()=>exportFiles('event','pdf');$('eventShareBtn').onclick=()=>exportFiles('event','share');
 $('recordPdfBtn').onclick=()=>exportFiles('record','pdf');$('recordShareBtn').onclick=()=>exportFiles('record','share');
@@ -1198,7 +1251,7 @@ window.addEventListener('fieldready:remote-db',e=>{
 });
 SYNC?.init?.({
  getDb:()=>db,
- shouldDeferAutoSync:()=>gradingSyncLocked||$('evalView').classList.contains('active')
+ shouldDeferAutoSync:()=>passwordChangePending||gradingSyncLocked||$('evalView').classList.contains('active')
 });
 document.addEventListener('visibilitychange',()=>{
  if(document.hidden&&$('evalView')?.classList.contains('active')&&evaluationTimingUnresolved())evalBackgroundedAt=now();

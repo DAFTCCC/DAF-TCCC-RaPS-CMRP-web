@@ -91,3 +91,8 @@ This executes the real migration twice, checks unique normalized names, owner/En
 ## Grading stability and timer controls (v4.5.1)
 
 Run `python3 tests/timing_browser.py` with the same Playwright runtime. It uses actual app/sync code, a local API double and controlled browser time to test desktop/mobile timer colors/contrast, touch size, long taps, focus preservation, exact boundaries, resets/pauses, offline saves, 92 seconds of background refresh suppression, explicit finalization sync, stable review and shared-browser account isolation. Screenshots are saved under `/tmp/fieldready-timing-review`. `node --test tests/*.cjs` includes focused production grading/timer and sync-pause checks. See `UI_ACCEPTANCE.md` for details and live-service limits.
+
+
+## Temporary credentials (v4.6.0)
+
+Run `node --test tests/*.cjs`, `node --test tests/username_database.mjs tests/password_database.mjs`, and `python3 tests/password_browser.py` in addition to the existing static and six browser suites. PGlite uses the existing pinned isolated-test installation described above. Function tests exercise the production TypeScript handler in Node 24; they cannot establish compatibility with the deployed Deno runtime/dispatcher. Installer tests use fake Docker responses, never NUC access. See UI_ACCEPTANCE.md and NUC_SETUP.md for the required live checks.

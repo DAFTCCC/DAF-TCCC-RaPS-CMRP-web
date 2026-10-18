@@ -87,3 +87,32 @@ After installation:
 5. Test **Share files → Share files** on the intended phone/tablet. The first click syncs and prepares CSV/PDF; the second supplies a fresh user gesture for the device share sheet. If file sharing is unsupported or fails, use the individual downloads and attach them in the email/files app. Cancellation is harmless. Handing files to the operating system does not confirm email delivery.
 
 Usernames are case-insensitive, 3–48 characters, and unique. Passwords remain managed by GoTrue. Email remains associated with the account for invitations/recovery. Anonymous clients cannot read the username/email resolver or its rate-limit table. The service-only resolver limits each normalized username to 20 attempts per 15 minutes and the login route globally to 120 attempts per minute; buckets expire and are cleaned up. Supabase Auth limits still apply. Direct export email is deferred; there is no export-email integration in this release.
+
+
+## v4.6.0 temporary account passwords
+
+This feature requires migration **014** and the updated **fieldready-account-admin** Edge Function on the dedicated FieldReady stack. Migration 013/username login must already be installed. The web release alone cannot install server changes.
+
+Run on the NUC from a fresh checkout:
+
+```bash
+fr_setup=$(mktemp -d)
+git clone --depth 1 https://github.com/DAFTCCC/DAF-TCCC-RaPS-CMRP-web.git "$fr_setup"
+bash "$fr_setup/deploy/fieldready-temporary-password-update.sh"
+```
+
+The script checks the persistent functions mount and existing server-side variables, makes and validates a protected FieldReady database dump under `$HOME/fieldready-backups`, saves the previous account-admin function when present, applies the repeatable transactional migration, installs the function and restarts **only fieldready-edge-functions**. It never targets the RaPS containers. Keep backups protected: they contain account and study data. A failure after migration can be retried from the same checkout. Do not manually clear password flags to recover an interrupted setup; issue a fresh temporary password instead.
+
+Refresh the web app to **4.6.0-study-web**. As Enterprise:
+
+1. Open **Users → Create User**, enter name, username and account email, then choose Evaluator, Program Manager or MAJCOM Manager and required scopes. Program Managers require both installation and parent MAJCOM. Enterprise promotion remains available through Manage after setup.
+2. Show/copy the generated temporary password and give it directly to the intended user. Closing the dialog clears it; it is not saved in browser storage, study records, exports or audit entries. No invitation email is sent by Create User. Email remains attached to the Auth identity for recovery.
+3. On another device, sign in with that username and temporary password. Study access must stay blocked until the user replaces it with a different password (12–128 characters). Verify the correct role and scope after setup.
+4. Test **Manage → Reset temporary password** for a disposable existing account. The old password must fail; temporary sign-in must require replacement again. Confirm role, class assignments and evaluations remain linked to the same user ID.
+5. Test expiry/reissue and ordinary account deactivation before wider use. Password setup expires 24 hours after issue. Too many change attempts are throttled; ask Enterprise to reissue if setup is lost or expired. Enterprise cannot reset its own password through this flow; use normal account recovery or another Enterprise administrator.
+
+The database holds pending credentials inactive, with separate intended activation state, so direct study APIs and governance RPCs also reject access before password setup. Reapproving/reactivating a pending account does not bypass this requirement. Pending users display **PASSWORD CHANGE**, rather than Removed. Deactivating a pending user prevents activation even if it knows the temporary password. Existing ordinary accounts remain active and keep their passwords. Native Auth stores password hashes; this feature never stores plaintext passwords in profiles, audit rows or study data.
+
+If a native Auth reset fails after access is paused, the account remains locked; retry issuing a temporary password. If replacement succeeds but activation is interrupted, sign in using the newly chosen password and finish setup, or ask Enterprise to reissue. The server verifies the current password again before activation and checks that the latest reset has not changed or expired.
+
+Local tests use synthetic HTTP responses and isolated PostgreSQL. They do not verify the NUC's deployed dispatcher, runtime environment, policies or actual second-device behavior; perform the checks above after installation. SMTP is needed only for the retained email-invitation/recovery workflows, not temporary account creation.

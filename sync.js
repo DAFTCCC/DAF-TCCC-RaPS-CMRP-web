@@ -73,6 +73,8 @@ async function signIn(identifier,password){
  if(!r?.access_token)throw new Error('No access token returned.');
  setSession({access_token:r.access_token,refresh_token:r.refresh_token,expires_at:r.expires_at||((Date.now()/1000)+Number(r.expires_in||3600)),user:r.user?{id:r.user.id,email:r.user.email}:null});
  try{
+  const pending=await currentProfile();
+  if(pending?.password_change_required&&pending.password_resume_active)return {...session(),profile:pending,passwordChangeRequired:true};
   const profile=await requireAuthorizedProfile();
   return {...session(),profile};
  }catch(e){
@@ -146,6 +148,7 @@ async function currentAccountRequest(){
 
 async function requireAuthorizedProfile(){
  const p=await currentProfile();
+ if(p?.password_change_required)throw new Error('Change your temporary password before accessing FieldReady study records.');
  if(p?.active)return p;
  let req=null;
  try{req=await currentAccountRequest();}catch{}
@@ -196,6 +199,20 @@ async function inviteUser({email,displayName,role,scopeType=null,scopeValue=null
   method:'POST',
   body:JSON.stringify({action:'invite',email,displayName,role,scopeType,scopeValue})
  });
+}
+async function temporaryAccountAction(body){
+ const fn=CFG.functions?.accountAdmin;
+ if(!fn)throw new Error('FieldReady account administration is not configured.');
+ return api('/functions/v1/'+fn,{method:'POST',body:JSON.stringify(body)});
+}
+async function createTemporaryUser(details){return temporaryAccountAction({...details,action:'create-temporary'});}
+async function resetTemporaryPassword(userId){return temporaryAccountAction({action:'reset-temporary',userId});}
+async function completeTemporaryPassword(temporaryPassword,newPassword){
+ const result=await temporaryAccountAction({action:'change-temporary',temporaryPassword,newPassword});
+ const r=result?.session;
+ if(!r?.access_token||r.user?.id!==session()?.user?.id)throw new Error('Password updated, but session renewal failed. Sign in again.');
+ setSession({access_token:r.access_token,refresh_token:r.refresh_token,expires_at:r.expires_at||((Date.now()/1000)+Number(r.expires_in||3600)),user:{id:r.user.id,email:r.user.email}});
+ return result;
 }
 
 async function ensureSession(){
@@ -532,6 +549,6 @@ window.FieldReadySync=Object.freeze({
  cachedUserId,captureBaseline,init,configured,status,renderStatus,session,signIn,signOut,acceptAuthCallback,updatePassword,requestAccount,
  currentProfile,currentMembership,currentAccountRequest,requireAuthorizedProfile,listAccountAdministration,dataEpoch,
  approveAccountRequest,denyAccountRequest,setUserAccess,setUsername,managerTeam,appointEvaluator,removeAppointedEvaluator,assignProgramManager,eligibleEvaluators,getEventEvaluators,setEventEvaluators,closeEvent,deleteEvent,inviteUser,
- syncNow,noteLocalChange,pauseAutoSync,resumeAutoSync
+ createTemporaryUser,resetTemporaryPassword,completeTemporaryPassword,syncNow,noteLocalChange,pauseAutoSync,resumeAutoSync
 });
 })();

@@ -1,4 +1,10 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.5.1-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.6.0-study-web
+
+## Temporary account passwords — v4.6.0
+
+Enterprise can **Users → Create User** with a username, email and role, or **Manage → Reset temporary password** for another enabled account. A strong generated password is shown once; Create User sends no invitation email. The user must replace it with a different password of at least 12 characters before study access. Setup expires after 24 hours; Enterprise can reissue credentials. Resets retain the account's role, assignments and study history.
+
+**NUC update required:** run `deploy/fieldready-temporary-password-update.sh` on the NUC after the username update. It backs up the dedicated FieldReady database and existing account function, installs migration 014 and the updated account-admin function, then restarts only FieldReady's functions runtime. See [NUC_SETUP.md](NUC_SETUP.md#v460-temporary-account-passwords). Until installed, the web UI displays a setup message. Existing ordinary accounts keep their current passwords.
 
 ## Stable grading and timing controls — v4.5.1
 

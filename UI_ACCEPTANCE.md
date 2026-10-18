@@ -1,4 +1,4 @@
-# UI acceptance — v4.5.1
+# UI acceptance — v4.6.0
 
 All results below were obtained locally with synthetic records. No real study participants, NUC account mutations, invitations, or production grading writes were used.
 
@@ -74,3 +74,12 @@ No skill content, score threshold, intervention assignments or NUC schema change
 Export checks also preserve raw clinical timer instances in event/longitudinal CSVs, including a 60,001ms failure against a 60,000ms maximum. The field is appended to Enterprise Detail too. Overall stopwatch seconds remain separate.
 
 Release validation: static validation passed; 56 Node regression tests passed; the username migration check passed in isolated PostgreSQL; all six browser suites passed locally. No authenticated live NUC grading or production data mutations were performed.
+
+
+## v4.6.0 temporary credentials
+
+`tests/password_browser.py` uses production app.js/sync.js with a stateful synthetic API. It covers all three creatable roles, PM parent scope, one-time credential display/clearing, phone layout, no plaintext in local storage, forced first-login setup, mismatch/wrong-current errors, reload/sign-out, old-password rejection, resets with identity/assignment retention, no self-reset control, non-Enterprise controls hidden, and migration-missing guidance. Requests to production are blocked. Authorization in this HTTP double is a model, not proof of deployed RLS.
+
+`tests/temporary_password_function.cjs` executes the actual function handler against synthetic Auth/REST responses. `tests/password_database.mjs` applies the actual migrations in isolated PostgreSQL, including repeat application, direct-table restrictions, governance RPC guards, service-only grants, reset nonce/expiry/throttle, activation/deactivation intent and assignment retention. `tests/password_installer.cjs` checks prerequisite/backup failures and dedicated-container targeting with a fake Docker command.
+
+Live acceptance still requires running the NUC installer and testing a disposable account on two devices for each intended role. Check the 24-hour deadline/reissue, native Auth policy acceptance, installed RLS, existing account login, scoped data after setup, and reset of an account with assignments. Previously downloaded offline records follow the existing offline access behavior; an administrator reset cannot erase data already held by an offline device.

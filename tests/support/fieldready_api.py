@@ -13,9 +13,10 @@ class FieldReadyAPI:
  def __init__(self,command,installation):
   self.command,self.installation=command,installation
   self.tables={name:[] for name in ['fr_events','fr_participants','fr_evaluations','fr_voids','fr_profiles','fr_memberships','fr_account_requests']}
-  self.assignments={};self.evaluator_scopes=set();self.pools={};self.calls=[];self.errors=[];self.archives=[]
+  self.passwords={};self.assignments={};self.evaluator_scopes=set();self.pools={};self.calls=[];self.errors=[];self.archives=[]
   for uid,role in [('enterprise','enterprise'),('majcom','majcom_manager'),('program','program_manager'),('evaluator','evaluator'),('unassigned','evaluator'),('candidate','evaluator'),('outsider','evaluator')]:
-   self.tables['fr_profiles'].append({'user_id':uid,'username':uid,'email':uid+'@example.invalid','display_name':uid.title(),'active':True,'role':role})
+   self.tables['fr_profiles'].append({'user_id':uid,'username':uid,'email':uid+'@example.invalid','display_name':uid.title(),'active':True,'role':role,'password_change_required':False,'password_resume_active':False})
+   self.passwords[uid]='valid-password'
   self.tables['fr_memberships']=[{'id':'m1','user_id':'majcom','scope_type':'majcom','scope_value':command},{'id':'m2','user_id':'program','scope_type':'installation','scope_value':installation,'parent_scope_value':command}]
   self.evaluator_scopes.add(('evaluator',command))
  def profile(self,uid):return next((p for p in self.tables['fr_profiles'] if p['user_id']==uid),None)
@@ -49,24 +50,47 @@ class FieldReadyAPI:
   self.calls.append((uid,method,path,copy.deepcopy(body)))
   if method=='OPTIONS':return 200,None
   if path=='/functions/v1/fieldready-login':
-   profile=next((p for p in self.tables['fr_profiles'] if p.get('username')==body.get('username','').strip().lower() and p['active']),None)
-   if not profile or body.get('password')!='valid-password':raise ApiError(400,'Invalid username or password.')
+   profile=next((p for p in self.tables['fr_profiles'] if p.get('username')==body.get('username','').strip().lower() and (p['active'] or (p.get('password_change_required') and p.get('password_resume_active')))),None)
+   if not profile or body.get('password')!=self.passwords.get(profile['user_id']):raise ApiError(400,'Invalid username or password.')
    uid=profile['user_id']
    return 200,{'access_token':'token-'+uid,'refresh_token':'refresh-'+uid,'expires_at':time.time()+3600,'user':{'id':uid,'email':profile['email']}}
   if path=='/auth/v1/token':
-   uid=body.get('email','').split('@')[0]
-   if body.get('password')!='valid-password' or not self.profile(uid):raise ApiError(400,'Invalid login credentials')
+   profile=next((p for p in self.tables['fr_profiles'] if p['email']==body.get('email')),None)
+   uid=profile['user_id'] if profile else ''
+   if not profile or body.get('password')!=self.passwords.get(uid):raise ApiError(400,'Invalid login credentials')
    return 200,{'access_token':'token-'+uid,'refresh_token':'refresh-'+uid,'expires_at':time.time()+3600,'user':{'id':uid,'email':body['email']}}
   if path=='/auth/v1/signup':
    user='request-'+str(uuid.uuid4());self.tables['fr_account_requests'].append({'id':user,'user_id':user,'email':body['email'],'display_name':body['data']['display_name'],'majcom':body['data']['majcom'],'installation_id':body['data']['installation_id'],'status':'pending'})
    return 200,{'user':{'id':user}}
   if path=='/auth/v1/logout':return 200,None
   profile=self.profile(uid)
+  if path=='/functions/v1/fieldready-account-admin' and body.get('action')=='change-temporary':
+   if not profile or not profile.get('password_change_required') or not profile.get('password_resume_active'):raise ApiError(403,'Password setup is not available.')
+   if profile['temporary_password_expires_at']<time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()):raise ApiError(403,'Temporary password has expired. Ask Enterprise for a new one.')
+   if body.get('temporaryPassword')!=self.passwords[uid]:raise ApiError(400,'The current temporary password is incorrect.')
+   if len(body.get('newPassword',''))<12:raise ApiError(400,'Choose at least 12 characters.')
+   self.passwords[uid]=body['newPassword'];profile.update(active=True,password_change_required=False,password_resume_active=False,temporary_password_expires_at=None)
+   return 200,{'session':{'access_token':'token-'+uid,'refresh_token':'refresh-'+uid,'expires_at':time.time()+3600,'user':{'id':uid,'email':profile['email']}}}
+  # Self-profile reads remain available to an inactive account for password setup.
+  if method=='GET' and path=='/rest/v1/fr_profiles' and profile and not profile['active']:
+   return 200,[copy.deepcopy(profile)]
   if not profile or not profile['active']:raise ApiError(403,'Active account required')
   if path.startswith('/rest/v1/rpc/'):
    return 200,self.rpc(uid,path.split('/')[-1],body)
   if path=='/functions/v1/fieldready-account-admin':
    if profile['role']!='enterprise':raise ApiError(403,'Enterprise access required')
+   if body.get('action') in ['create-temporary','reset-temporary']:
+    if body['action']=='create-temporary':
+     if any(p.get('username')==body['username'] for p in self.tables['fr_profiles']):raise ApiError(409,'Username unavailable')
+     user='temporary-'+str(uuid.uuid4());target={'user_id':user,'username':body['username'],'email':body['email'],'display_name':body['displayName'],'role':body['role']}
+     self.tables['fr_profiles'].append(target)
+     if body.get('scopeType'):self.tables['fr_memberships'].append({'id':str(uuid.uuid4()),'user_id':user,'scope_type':body['scopeType'],'scope_value':body['scopeValue'],'parent_scope_value':body.get('parentScope')})
+    else:
+     user=body['userId'];target=self.profile(user)
+     if user==uid or not target or not (target['active'] or target.get('password_resume_active')):raise ApiError(403,'An enabled account is required.')
+    target.update(active=False,password_change_required=True,password_resume_active=True,temporary_password_expires_at=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(time.time()+86400)))
+    password='Fr!SyntheticTemporary-'+str(uuid.uuid4());self.passwords[user]=password
+    return 200,{'userId':user,'username':target['username'],'expiresAt':target['temporary_password_expires_at'],'temporaryPassword':password}
    user='invited-'+str(uuid.uuid4());self.tables['fr_profiles'].append({'user_id':user,'email':body['email'],'display_name':body['displayName'],'active':True,'role':body['role']})
    return 200,{'user_id':user}
   if not path.startswith('/rest/v1/'):raise AssertionError('Unexpected endpoint '+path)
