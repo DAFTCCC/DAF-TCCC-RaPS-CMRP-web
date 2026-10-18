@@ -1,22 +1,22 @@
 """UI integration checks with synthetic data and mocked account services."""
-import csv,json,threading
+import csv,json,threading,subprocess
 from pathlib import Path
 from functools import partial
 from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+from support.browser_runtime import chromium_options
 from playwright.sync_api import sync_playwright
 root=Path(__file__).resolve().parents[1]
 server=ThreadingHTTPServer(('127.0.0.1',0),partial(SimpleHTTPRequestHandler,directory=str(root)))
 threading.Thread(target=server.serve_forever,daemon=True).start()
-source=(root/'raps-skills.js').read_text()
-tiers=json.loads(source.split('const tiers=',1)[1].split(';\nfunction clock',1)[0])
+tiers=json.loads(subprocess.check_output(['node','-e',"global.window={};require('./skills.js');require('./raps-skills.js');console.log(JSON.stringify(window.FIELDREADY_SKILLS));"],cwd=root,text=True))
 events=[]
 for tier in tiers.values():
- key=tier['shortName']
- events.append({'id':'event-'+key,'name':key+' assessment','studyArm':'Control','skillId':key,'timepoint':'baseline','date':'2026-01-01','participants':[{'id':'roster-'+key,'participantId':'N001','evaluation':{'id':'eval-'+key,'finalizedAt':1,'finalResult':'PASS','assessment':{'phase':'baseline','date':'2026-01-01'},'skillSource':'RaPS Tier '+tier['id']+' · '+tier['source'],'scenarioVersion':'1','ratings':{i['id']:'pass' for sec in tier['sections'] for i in sec['items']},'stopwatch':{'completed':True,'elapsedMs':60000}}}]})
-closed=json.loads(json.dumps(events[0]));closed['id']='closed-event';closed['closedAt']=1;closed['participants'][0]['evaluation']['finalizedAt']=None;events.append(closed)
+ key=tier['id']
+ events.append({'id':'event-'+key,'name':key+' assessment','studyArm':'Control','skillId':key,'timepoint':'baseline','date':'2026-01-01','participants':[{'id':'roster-'+key,'participantId':'N001','evaluation':{'id':'eval-'+key,'finalizedAt':1,'finalResult':'PASS','assessment':{'phase':'baseline','date':'2026-01-01'},'skillSource':tier['source'],'scenarioVersion':'1','ratings':{i['id']:'pass' for sec in tier['sections'] for i in sec['items']},'stopwatch':{'completed':True,'elapsedMs':60000}}}]})
+closed=json.loads(json.dumps(events[0]));closed['id']='closed-event';closed['closedAt']=1;closed['participants'][0]['id']='closed-roster';closed['participants'][0]['evaluation']['finalizedAt']=None;events.append(closed)
 try:
  with sync_playwright() as p:
-  browser=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
+  browser=p.chromium.launch(**chromium_options())
   for role in ['evaluator','program_manager','majcom_manager','enterprise']:
    context=browser.new_context(accept_downloads=True,viewport={'width':390 if role=='evaluator' else 1280,'height':844})
    page=context.new_page();errors=[];backend=[]
@@ -42,7 +42,7 @@ try:
      assert page.locator('[name=majcom] option').count()==2
     page.locator('#modalClose').click()
    for tier in tiers.values():
-    key=tier['shortName']
+    key=tier['id']
     page.locator('[data-event="event-'+key+'"]').click()
     assert page.locator('#editEventBtn').is_visible()==(role!='evaluator')
     page.locator('[data-grade="roster-'+key+'"]').click()
@@ -61,15 +61,15 @@ try:
     assert 'assessment_type' in rows[0] and 'evaluation_id' in rows[0]
     page.locator('#homeBrand').click()
    page.locator('[data-event="closed-event"]').click()
-   page.locator('[data-grade="roster-ASM"]').click()
+   page.locator('[data-grade="closed-roster"]').click()
    assert page.locator('#assessmentPhase').is_disabled()
    assert page.locator('#reviewFinalizeBtn').is_disabled()
    assert page.locator('#criteriaList [data-rate]:enabled').count()==0
    assert page.locator('#stopwatchToggle').count()==0
-   assert page.evaluate('window.exportRefreshes')==3
+   assert page.evaluate('window.exportRefreshes')==len(tiers)
    assert not errors,errors
    assert not backend,backend
-   print('UI PASS:',role,'permissions, ASM/CLS/CPP sections, finalized locking, refreshed exports')
+   print('UI PASS:',role,'permissions, all 8 skill modules, finalized/closed locking, refreshed exports')
    context.close()
   browser.close()
 finally:server.shutdown()

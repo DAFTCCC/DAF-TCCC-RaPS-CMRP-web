@@ -24,3 +24,29 @@ jobs:
         run: python3 tests/static_validate.py
       - name: Sync regression tests
         run: node --test tests/*.cjs
+
+  browser-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install browser test runtime
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install --with-deps chromium
+      - name: Complete role and two-device workflows
+        run: python tests/role_journeys.py
+      - name: Skill sheets, role controls, and exports
+        run: python tests/roles_browser.py
+      - name: Longitudinal study workflows
+        run: python tests/study_browser.py
+      - name: Retained local testing mode
+        run: python tests/warning_browser.py

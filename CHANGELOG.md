@@ -1,3 +1,12 @@
+## v4.4.1 — role workflow verification and UI fixes
+
+- Fix form entries lost when synchronization replaced records while a modal was open; reject stale edits by server revision.
+- Preserve the current view on manual sync and refuse misleading success while grading defers sync.
+- Fix mobile navigation overflow and contain login/dialog keyboard focus.
+- Cancel account-denial actions when the prompt is dismissed.
+- Add real-sync-client browser journeys for all four roles, two-device CSV equality, grading/finalization, archival, and retained history; expand rendering/export coverage to all eight skill modules and run browser suites in CI.
+- Document the distinction between local client tests and live NUC authentication/RLS acceptance.
+
 # Changelog\n\n## 4.2.0-study-web — 2026-09-23\n\n- Added disabled-by-default FieldReady NUC/Supabase backend configuration.\n- Added local-first synchronization states and top-bar status control.\n- Added Supabase Auth sign-in/sync panel when backend is enabled.\n- Added dedicated `fr_*` database schema, RLS scope model, server revisions, finalized-record lock, and audit log foundation.\n- Protected already-finalized server evaluations from repeat client upserts.\n- Kept RaPS separate and unchanged.\n\n# Changelog
 
 ## 4.1.0-study-web — 2026-09-18

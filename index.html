@@ -35,7 +35,7 @@
   </div>
 </div>
 
-<header class="topbar">
+<header class="topbar" inert>
   <div class="brand" role="button" tabindex="0" id="homeBrand">
     <div class="brandMark small">FR</div>
     <div><b>FieldReady</b><span>Competency Study</span></div>
@@ -51,7 +51,7 @@
   </div>
 </header>
 
-<main>
+<main inert>
   <section id="homeView" class="view active">
     <div class="hero">
       <div>
@@ -188,7 +188,7 @@
   </section>
 </main>
 
-<div id="modal" class="modal hidden" aria-hidden="true">
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-hidden="true">
   <div class="modalCard"><button id="modalClose" class="modalClose" aria-label="Close">×</button><h2 id="modalTitle"></h2><div id="modalBody"></div></div>
 </div>
 <div id="toast" class="toast hidden"></div>

@@ -2,6 +2,7 @@ import json,threading,csv
 from pathlib import Path
 from functools import partial
 from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+from support.browser_runtime import chromium_options
 from playwright.sync_api import sync_playwright
 server=ThreadingHTTPServer(('127.0.0.1',0),partial(SimpleHTTPRequestHandler,directory=str(Path(__file__).resolve().parents[1])))
 threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -12,7 +13,7 @@ for n,(tp,phase,date,passed) in enumerate([('baseline','baseline','2026-01-01',1
 mock="""window.FieldReadySync={configured:()=>true,session:()=>null,init:()=>{},acceptAuthCallback:async()=>null,currentProfile:async()=>({active:true,role:'enterprise'}),signIn:async()=>{},syncNow:async()=>{},noteLocalChange:()=>{},resumeAutoSync:()=>{},pauseAutoSync:()=>{}};"""
 try:
  with sync_playwright() as p:
-  b=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
+  b=p.chromium.launch(**chromium_options())
   page=b.new_page(accept_downloads=True)
   errors=[]
   page.on('pageerror',lambda e:errors.append(str(e)))

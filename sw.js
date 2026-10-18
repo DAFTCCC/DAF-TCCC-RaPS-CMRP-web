@@ -1,4 +1,4 @@
-const CACHE='fieldready-study-v4.4.0';
+const CACHE='fieldready-study-v4.4.1';
 
 const ASSETS=[
   './',

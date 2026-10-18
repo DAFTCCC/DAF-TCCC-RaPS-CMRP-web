@@ -145,8 +145,34 @@ function eventHomeName(e){return installation(e.homeInstallationId)?.name||e.hom
 function getEval(){return participant()?.evaluation||null;}
 function showView(id){if(id!=='evalView')releaseEvalWakeLock();document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id).classList.add('active');window.scrollTo({top:0,behavior:'instant'});}
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200);}
-function openModal(title,html){$('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden');$('modal').setAttribute('aria-hidden','false');}
-function closeModal(){$('modal').classList.add('hidden');$('modal').setAttribute('aria-hidden','true');$('modalBody').innerHTML='';}
+let modalReturnFocus=null;
+function setAccessGate(visible){
+ $('safeguard').classList.toggle('hidden',!visible);
+ document.querySelector('main').inert=visible;document.querySelector('.topbar').inert=visible;
+}
+function layerControls(layer){return [...layer.querySelectorAll('button,input,select,textarea,[tabindex]')].filter(el=>!el.disabled&&el.tabIndex>=0&&el.getClientRects().length);}
+function openModal(title,html){
+ if($('modal').classList.contains('hidden'))modalReturnFocus=document.activeElement;
+ $('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden');$('modal').setAttribute('aria-hidden','false');
+ queueMicrotask(()=>layerControls($('modal')).find(el=>el.id!=='modalClose')?.focus());
+}
+function closeModal(){
+ $('modal').classList.add('hidden');$('modal').setAttribute('aria-hidden','true');$('modalBody').innerHTML='';
+ if(modalReturnFocus?.isConnected)modalReturnFocus.focus();modalReturnFocus=null;
+}
+document.addEventListener('keydown',e=>{
+ const modalOpen=!$('modal').classList.contains('hidden');
+ const layer=modalOpen?$('modal'):!$('safeguard').classList.contains('hidden')?$('safeguard'):null;
+ if(e.key==='Escape'&&modalOpen){e.preventDefault();closeModal();return;}
+ if(e.key!=='Tab'||!layer)return;
+ const controls=layerControls(layer);if(!controls.length)return;
+ const first=controls[0],last=controls[controls.length-1];
+ if(e.shiftKey&&(document.activeElement===first||!layer.contains(document.activeElement))){e.preventDefault();last.focus();}
+ else if(!e.shiftKey&&(document.activeElement===last||!layer.contains(document.activeElement))){e.preventDefault();first.focus();}
+});
+setAccessGate(true);
+if(typeof ResizeObserver==='function')new ResizeObserver(entries=>document.documentElement.style.setProperty('--topbar-height',Math.ceil(entries[0].target.getBoundingClientRect().height)+'px')).observe(document.querySelector('.topbar'));
+
 
 function openAccountRequest(){
  const majcomOptions=LOC.commands.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
@@ -253,7 +279,7 @@ async function renderAdmin(){
   if(inactiveProfiles.length)$('accountUsersTable').innerHTML+=`<details><summary>Removed access (${inactiveProfiles.length})</summary><table class="dataTable"><thead><tr><th>User</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${inactiveProfiles.map(userRow).join('')}</tbody></table></details>`;
 
   document.querySelectorAll('[data-approve-request]').forEach(b=>b.onclick=()=>openApproveRequest((data.requests||[]).find(r=>r.id===b.dataset.approveRequest)));
-  document.querySelectorAll('[data-deny-request]').forEach(b=>b.onclick=async()=>{const note=prompt('Reason for denial (optional):')||'';try{await SYNC.denyAccountRequest(b.dataset.denyRequest,note);toast('Account request denied.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to deny request.');}});
+  document.querySelectorAll('[data-deny-request]').forEach(b=>b.onclick=async()=>{const note=prompt('Reason for denial (optional):');if(note===null)return;try{await SYNC.denyAccountRequest(b.dataset.denyRequest,note);toast('Account request denied.');renderAdmin();}catch(ex){alert(ex?.message||'Unable to deny request.');}});
   document.querySelectorAll('[data-edit-user]').forEach(b=>b.onclick=()=>openManageUser((data.profiles||[]).find(p=>p.user_id===b.dataset.editUser),memberships.get(b.dataset.editUser)));
  }catch(ex){
   $('accountRequestsTable').innerHTML=`<div class="empty bad">${esc(ex?.message||'Unable to load account administration.')}</div>`;
@@ -395,18 +421,20 @@ function renderStudyRecord(rows){
  $('exportStudy').onclick=()=>refreshForExport(()=>exportStudyRecords(recordRows()));
 }
 function showEnrollment(rows){
+ const enrollmentKey=rows[0]?.key;
  const found=STUDY.enrollment(rows);
  if(found.value){openModal('Study enrollment',`<p>Enrollment ID: ${esc(found.value.id)}</p><p>Assigned arm: ${esc(found.value.arm)}</p><p>Enrolled: ${esc(found.value.enrolledDate)} · Initial training: ${esc(found.value.trainingDate)}</p><p>Assignment is preserved across this participant’s records. Corrections require a controlled data-management process.</p>`);return;}
  if(rows.some(r=>r.p.enrollment)){alert(found.issue+' — resolve conflicting records through controlled data management.');return;}
  if(!canManageEventLifecycle()){alert('A study manager must record enrollment.');return;}
  openModal('Record study enrollment',`<p>Enter the assignment already made by the study team. This does not randomize the participant.</p><form id="enrollmentForm"><div class="formGrid"><label><span>Assigned study arm</span><select name="arm" required><option value="">Select arm</option>${STUDY.arms.map(a=>`<option>${esc(a)}</option>`).join('')}</select></label><label><span>Enrollment date</span><input name="enrolledDate" type="date" required></label><label><span>Initial CMRP training completion date</span><input name="trainingDate" type="date" required></label></div><button class="btn primary" type="submit">Save enrollment</button></form>`);
- $('enrollmentForm').onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));if(!STUDY.validDate(d.enrolledDate)||!STUDY.validDate(d.trainingDate))return;if(rows.some(r=>r.e.studyArm!==d.arm)){alert('Assigned arm conflicts with an existing event. Resolve the event assignment before enrollment.');return;}const en={id:uuid(),...d,recordedAt:now(),recordedBy:SYNC?.session?.()?.user?.id||null};rows.forEach(r=>r.p.enrollment=deep(en));saveDb();closeModal();renderLongitudinalRecord();};
+ $('enrollmentForm').onsubmit=e=>{e.preventDefault();rows=allParticipantInstances().filter(r=>r.key===enrollmentKey);if(!rows.length||rows.some(r=>r.p.enrollment)){alert('The enrollment record changed while this form was open. Reopen the current record.');return;}const d=Object.fromEntries(new FormData(e.target));if(!STUDY.validDate(d.enrolledDate)||!STUDY.validDate(d.trainingDate))return;if(rows.some(r=>r.e.studyArm!==d.arm)){alert('Assigned arm conflicts with an existing event. Resolve the event assignment before enrollment.');return;}const en={id:uuid(),...d,recordedAt:now(),recordedBy:SYNC?.session?.()?.user?.id||null};rows.forEach(r=>r.p.enrollment=deep(en));saveDb();closeModal();renderLongitudinalRecord();};
 }
 function showExposure(rows){
- const writable=rows.find(r=>r.e.skillId===currentRecordSkill&&!eventClosed(r.e));
+ let writable=rows.find(r=>r.e.skillId===currentRecordSkill&&!eventClosed(r.e));
+ const exposureEventId=writable?.e.id,exposureParticipantId=writable?.p.id,exposureSkillId=currentRecordSkill;
  if(!writable){alert('An open event for this skill is needed to record an exposure.');return;}
  openModal('Record training exposure',`<p>Record training delivered outside this app. Include deviations from the assigned intervention; do not change the arm to match the training received.</p><form id="exposureForm"><div class="formGrid"><label><span>Training date</span><input name="date" type="date" required></label><label><span>Practice type</span><select name="type" required><option value="self-guided">Self-guided</option><option value="coached">Coached deliberate practice</option><option value="other">Other / protocol deviation</option></select></label><label><span>Minutes</span><input name="minutes" type="number" min="0" step="0.1" required></label><label><span>Repetitions</span><input name="repetitions" type="number" min="0" step="1" required></label><label><span>Coaching / feedback events</span><input name="coachingEvents" type="number" min="0" step="1" required></label><label><span>Trials to mastery (blank if not measured)</span><input name="trialsToMastery" type="number" min="1" step="1"></label><label class="full"><span>Goals, training details, or protocol deviations</span><textarea name="notes" required></textarea></label></div><button class="btn primary" type="submit">Save exposure</button></form>`);
- $('exposureForm').onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));if(!STUDY.validDate(d.date))return;const exposure={...d,id:uuid(),skillId:currentRecordSkill,minutes:Number(d.minutes),repetitions:Number(d.repetitions),coachingEvents:Number(d.coachingEvents),trialsToMastery:d.trialsToMastery===''?null:Number(d.trialsToMastery),recordedAt:now(),recordedBy:SYNC?.session?.()?.user?.id||null};writable.p.trainingExposures=[...(writable.p.trainingExposures||[]),exposure];saveDb();closeModal();renderLongitudinalRecord();};
+ $('exposureForm').onsubmit=e=>{e.preventDefault();writable=allParticipantInstances().find(r=>r.e.id===exposureEventId&&r.p.id===exposureParticipantId&&!eventClosed(r.e));if(!writable){alert('This event is no longer open. Preserve your entries and reopen the current record.');return;}const d=Object.fromEntries(new FormData(e.target));if(!STUDY.validDate(d.date))return;const exposure={...d,id:uuid(),skillId:exposureSkillId,minutes:Number(d.minutes),repetitions:Number(d.repetitions),coachingEvents:Number(d.coachingEvents),trialsToMastery:d.trialsToMastery===''?null:Number(d.trialsToMastery),recordedAt:now(),recordedBy:SYNC?.session?.()?.user?.id||null};writable.p.trainingExposures=[...(writable.p.trainingExposures||[]),exposure];saveDb();closeModal();renderLongitudinalRecord();};
 }
 function exportStudyRecords(rows){
  const headers=['record_type','participant_id','enrollment_id','assigned_arm','enrolled_date','initial_training_date','event_id','skill_id','timepoint','assessment_id','assessment_type','assessment_date','finalized_at','score_percent','change_from_baseline_pp','days_from_baseline','comparison_issue','exposure_id','exposure_date','practice_type','minutes','repetitions','coaching_events','trials_to_mastery','notes','final_result','critical_fail_count','skill_source','scenario_version','app_version','recorded_at','recorded_by'];
@@ -427,6 +455,7 @@ function renderAssessmentContext(){
 function renderEvents(){const es=db.events.filter(e=>!e.deletedAt).sort((a,b)=>String(b.date).localeCompare(String(a.date)));$('eventsList').innerHTML=es.length?es.map(e=>{const finals=e.participants.filter(p=>p.evaluation?.finalizedAt).length;const closed=eventClosed(e);return `<div class="eventCard" data-event="${e.id}"><div><h3>${esc(e.name)}${closed?' <span class="status pass">CLOSED</span>':''}</h3><div class="eventMetaLine">${esc(SKILLS[e.skillId]?.shortName||e.skillId)} · ${esc(e.studyArm)} · ${esc(e.timepoint)} · ${esc(commandName(e.majcom))} · ${esc(eventHomeName(e))}</div></div><div><span class="status">${finals}/${e.participants.length} finalized</span></div></div>`;}).join(''):'<div class="empty">No study events yet. Create an event for a skill, timepoint, study arm, MAJCOM, and installation.</div>';document.querySelectorAll('[data-event]').forEach(x=>x.onclick=()=>openEvent(x.dataset.event));}
 
 async function showEventForm(existing=null){
+ const editingId=existing?.id,openedRevision=existing?._serverRevision;
  if(currentAccessProfile?.role==='evaluator'){toast('Evaluators can grade assigned events but cannot create or edit study events.');return;}
  const scope=accountEventScope();
  let team={evaluators:[]},assigned=[];
@@ -489,6 +518,7 @@ async function showEventForm(existing=null){
  f.onsubmit=async e=>{
   e.preventDefault();
   const submit=f.querySelector('button[type="submit"]');submit.disabled=true;
+  if(editingId){existing=db.events.find(row=>row.id===editingId);if(!existing||eventClosed(existing)||existing._serverRevision!==openedRevision){alert('This event changed while the form was open. Preserve your entries and reopen the current record.');submit.disabled=false;return;}}
   const d=Object.fromEntries(new FormData(f).entries());
   delete d.assignedEvaluators;
   const leadEvaluatorId=String(f.elements.leadEvaluatorId.value||'');
@@ -532,14 +562,18 @@ function openEvent(id){currentEventId=id;currentParticipantId=null;renderEvent()
 function renderEvent(){const e=event();if(!e)return renderHome();showView('eventView');SYNC?.resumeAutoSync?.();const s=skill(e),closed=eventClosed(e);$('eventKicker').textContent=`${e.timepoint.toUpperCase()} · ${e.studyArm.toUpperCase()}${closed?' · CLOSED':''}`;$('eventTitle').textContent=e.name;$('eventSub').textContent=`${s.name} · ${s.source}${closed?' · Read-only archive':''}`;const home=installation(e.homeInstallationId);const vals=[['Class status',closed?'CLOSED':'OPEN'],['Study arm',e.studyArm],['Timepoint',e.timepoint],['MAJCOM',commandName(e.majcom)],['Home installation',eventHomeName(e)],['Host command',home?commandName(home.hostCommand):'—'],['Unit',e.unit||'—'],['Training location',e.trainingLocation||'—'],['Scenario',e.scenario||'—'],['Scenario version',e.scenarioVersion||'1'],['Date',e.date||'—'],['Evaluator',e.leadEvaluator||'—'],['Closed at',closed?new Date(e.closedAt).toLocaleString():'—'],['App version',BUILD.versionName]];$('eventMeta').innerHTML=vals.map(([a,b])=>`<div class="metaCell"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');const edit=$('editEventBtn'),add=$('addParticipantBtn'),close=$('closeEventBtn'),del=$('deleteEventBtn');if(edit)edit.classList.toggle('hidden',closed||!canManageEventLifecycle());if(add)add.classList.toggle('hidden',closed);if(close){close.classList.toggle('hidden',WARNING_ONLY||closed||!canManageEventLifecycle());close.disabled=false;}if(del)del.classList.toggle('hidden',!canDeleteEvent());renderRoster();renderEventAnalytics();}
 function renderHomeSilently(){populateFilters();renderManagement();renderParticipantIndex();renderEvents();}
 function renderRoster(){const e=event(),closed=eventClosed(e);$('rosterTable').innerHTML=e.participants.length?`<table class="dataTable"><thead><tr><th>Participant ID</th><th>AFSC</th><th>Clinical years</th><th>Work section</th><th>Exposure</th><th>Status</th><th></th></tr></thead><tbody>${e.participants.map(p=>{const ev=p.evaluation,score=ev?scoring(ev,skill(e)):null,status=ev?.finalizedAt?ev.finalResult:ev?'IN PROGRESS':'NOT STARTED';return `<tr><td><b>${esc(p.participantId)}</b><div class="tiny">${esc(p.rank||'')}</div></td><td>${esc(p.afsc||'—')}</td><td>${esc(p.clinicalYears??'—')}</td><td>${esc(p.workSection||'—')}</td><td class="tiny">${p.intervention?.sessions||0} sessions · ${p.intervention?.repetitions||0} reps · ${p.intervention?.coachingEvents||0} coaching</td><td><span class="status ${status==='PASS'?'pass':status==='FAIL'?'fail':''}">${status}</span>${ev?`<div class="tiny">${score.percent==null?'—':pct(score.percent)}</div>`:''}</td><td><button class="btn ghost" data-grade="${p.id}">${closed||ev?.finalizedAt?'Review':'Grade'}</button> <button class="btn ghost" data-longitudinal="${esc(p.participantId)}">Longitudinal</button> ${closed?'':`<button class="btn ghost" data-editp="${p.id}">Edit</button>`}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty">No participants rostered.</div>';document.querySelectorAll('[data-grade]').forEach(b=>b.onclick=()=>openEvaluation(b.dataset.grade));document.querySelectorAll('[data-longitudinal]').forEach(b=>b.onclick=()=>openLongitudinalRecord(b.dataset.longitudinal,e.skillId));document.querySelectorAll('[data-editp]').forEach(b=>b.onclick=()=>showParticipantForm(e.participants.find(p=>p.id===b.dataset.editp)));}
-function showParticipantForm(existing=null){const e=event();if(eventClosed(e)){toast('Closed classes are read-only.');return;}openModal(existing?'Edit Participant':'Add Participant',`<form id="participantForm"><div class="formGrid">
+function showParticipantForm(existing=null){let e=event();const eventId=e?.id,participantId=existing?.id,openedRevision=existing?._serverRevision;if(eventClosed(e)){toast('Closed classes are read-only.');return;}openModal(existing?'Edit Participant':'Add Participant',`<form id="participantForm"><div class="formGrid">
  <label><span>Participant ID *</span><input name="participantId" required value="${esc(existing?.participantId||'')}"></label><label><span>Rank (optional)</span><input name="rank" value="${esc(existing?.rank||'')}"></label>
  <label><span>AFSC *</span><input name="afsc" required value="${esc(existing?.afsc||'46NX')}"></label><label><span>Clinical years experience *</span><input name="clinicalYears" type="number" min="0" step="0.5" required value="${esc(existing?.clinicalYears??'')}"></label>
  <label class="full"><span>Current work section *</span><input name="workSection" required value="${esc(existing?.workSection||'')}"></label>
  <label><span>Practice sessions</span><input name="sessions" type="number" min="0" value="${existing?.intervention?.sessions||0}"></label><label><span>Practice repetitions</span><input name="repetitions" type="number" min="0" value="${existing?.intervention?.repetitions||0}"></label>
  <label><span>Feedback / coaching events</span><input name="coachingEvents" type="number" min="0" value="${existing?.intervention?.coachingEvents||0}"></label><label><span>Trials to mastery</span><input name="trialsToMastery" type="number" min="0" value="${existing?.intervention?.trialsToMastery||0}"></label>
  <label><span>Intervention minutes</span><input name="trainingMinutes" type="number" min="0" step="1" value="${existing?.intervention?.trainingMinutes||0}"></label>
- </div><p class="tiny spaced">Exposure fields are intervention/fidelity data only. They do not alter formal evaluation scoring.</p><div class="actionsRow"><button class="btn primary" type="submit">${existing?'Save':'Add Participant'}</button></div></form>`);const f=$('participantForm');f.onsubmit=x=>{x.preventDefault();const d=Object.fromEntries(new FormData(f).entries());const normalized=STUDY.pid(d.participantId);
+ </div><p class="tiny spaced">Exposure fields are intervention/fidelity data only. They do not alter formal evaluation scoring.</p><div class="actionsRow"><button class="btn primary" type="submit">${existing?'Save':'Add Participant'}</button></div></form>`);const f=$('participantForm');f.onsubmit=x=>{x.preventDefault();
+e=db.events.find(row=>row.id===eventId);
+if(!e||eventClosed(e)){alert('This event is no longer open. Preserve your entries and reopen the current record.');return;}
+if(participantId){existing=e.participants.find(row=>row.id===participantId);if(!existing||existing._serverRevision!==openedRevision){alert('This participant changed while the form was open. Preserve your entries and reopen the current record.');return;}}
+const d=Object.fromEntries(new FormData(f).entries());const normalized=STUDY.pid(d.participantId);
 if(!normalized){alert('Participant ID is required.');return;}
 if(existing&&STUDY.pid(existing.participantId)!==normalized){alert('Participant IDs cannot be changed on an existing roster record.');return;}
 if(e.participants.some(p=>p!==existing&&STUDY.pid(p.participantId)===normalized)){alert('This participant is already on this event roster.');return;}
@@ -842,7 +876,7 @@ function openSyncPanel(){
  }
  if(!sess?.access_token){
   closeModal();
-  $('safeguard').classList.remove('hidden');
+  setAccessGate(true);
   $('accessError').textContent='Your FieldReady session ended. Sign in again.';
   $('accessError').classList.remove('hidden');
   syncAccessButton();
@@ -854,7 +888,7 @@ function openSyncPanel(){
  if(testBackup){$('modalBody').insertAdjacentHTML('beforeend','<button id="testBackupBtn" class="btn ghost">Download local testing backup</button>');$('testBackupBtn').onclick=()=>download('FieldReady_Local_Test_Backup.json',testBackup,'application/json');}
  const recovery=localStorage.getItem('FIELDREADY_SYNC_RECOVERY_'+sess.user?.id);
  if(recovery){$('modalBody').insertAdjacentHTML('beforeend','<button id="syncRecoveryBtn" class="btn ghost">Download pending-work recovery backup</button>');$('syncRecoveryBtn').onclick=()=>download('FieldReady_Pending_Work_Recovery.json',recovery,'application/json');}
- $('syncNowBtn').onclick=async()=>{try{await SYNC.syncNow(db);closeModal();toast('FieldReady synchronized.');renderHome();}catch(x){alert('Sync failed: '+(x.message||x));}};
+ $('syncNowBtn').onclick=async()=>{try{await SYNC.syncNow(undefined,{requireFresh:true});closeModal();toast('FieldReady synchronized.');}catch(x){alert('Sync failed: '+(x.message||x));}};
  $('syncSignOutBtn').onclick=async()=>{closeModal();await lockFieldReady();};
 }
 function backupAll(){download(`FieldReady_Backup_${isoDate()}.json`,JSON.stringify(db,null,2),'application/json');}
@@ -874,14 +908,14 @@ async function loadCurrentAccess(){
 }
 function canUseOwnCachedData(){const userId=SYNC?.session?.()?.user?.id;return !!userId&&!!currentAccessProfile?.active&&SYNC?.cachedUserId?.()===userId;}
 function enterWithSyncWarning(message){
- $('safeguard').classList.add('hidden');$('accessPassword').value='';renderHome();
+ setAccessGate(false);$('accessPassword').value='';renderHome();
  openModal('Synchronization needs attention',`<p>${esc(message)}</p><p>Your authorized local work is available. Use Backup to preserve pending changes, then resolve the synchronization error before exporting shared results.</p>`);
 }
 async function unlockFieldReady(){
   const err=$('accessError');
   err?.classList.add('hidden');
   if(!$('ackCheck').checked){syncAccessButton();return;}
-  if(WARNING_ONLY){setAccountUi(null);$('safeguard').classList.add('hidden');renderHome();toast('Local testing · records stay in this browser.');return;}
+  if(WARNING_ONLY){setAccountUi(null);setAccessGate(false);renderHome();toast('Local testing · records stay in this browser.');return;}
   if(!SYNC?.configured?.()){
     err.textContent='FieldReady backend is not configured.';
     err.classList.remove('hidden');
@@ -894,7 +928,7 @@ async function unlockFieldReady(){
     await SYNC.signIn(email,password);
     await loadCurrentAccess();
     await SYNC.syncNow(db);
-    $('safeguard').classList.add('hidden');
+    setAccessGate(false);
     $('accessPassword').value='';
     renderHome();
     toast('Signed in and synchronized.');
@@ -912,7 +946,7 @@ async function lockFieldReady(){
   setAccountUi(null,null);
   $('ackCheck').checked=false;
   $('accessPassword').value='';
-  $('safeguard').classList.remove('hidden');
+  setAccessGate(true);
   syncAccessButton();
   setTimeout(()=>$('accessEmail')?.focus(),50);
   toast(WARNING_ONLY?'Warning acknowledgement required.':'FieldReady signed out.');
@@ -951,7 +985,7 @@ async function handleAuthCallback(){
     await SYNC.updatePassword(pw);
     const profile=await SYNC.requireAuthorizedProfile();
     setAccountUi(profile);
-    $('safeguard').classList.add('hidden');
+    setAccessGate(false);
     closeModal();
     await SYNC.syncNow(db);
     renderHome();
@@ -965,7 +999,7 @@ async function handleAuthCallback(){
  if(cb.type==='signup'){
   try{await SYNC.signOut();}catch{}
   setAccountUi(null);
-  $('safeguard').classList.remove('hidden');
+  setAccessGate(true);
   const err=$('accessError');err.textContent='Email confirmed. Your FieldReady account request is waiting for administrator approval.';err.classList.remove('hidden');
   return true;
  }
@@ -982,12 +1016,12 @@ async function restoreAuthorizedSession(){
   await SYNC.requireAuthorizedProfile();
   await loadCurrentAccess();
   await SYNC.syncNow(db);
-  $('safeguard').classList.add('hidden');
+  setAccessGate(false);
  }catch(e){
   if(canUseOwnCachedData()){enterWithSyncWarning(e?.message||'Synchronization failed.');return;}
   try{await SYNC.signOut();}catch{}
   setAccountUi(null);
-  $('safeguard').classList.remove('hidden');
+  setAccessGate(true);
   const err=$('accessError');err.textContent=e?.message||'This account is not authorized for FieldReady.';err.classList.remove('hidden');
  }
 }

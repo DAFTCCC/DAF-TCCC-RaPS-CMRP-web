@@ -1,4 +1,8 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.4.0-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.4.1-study-web
+
+## UI acceptance update — v4.4.1
+
+Form saves now survive a background refresh and reject conflicting edits, mobile navigation stays within the viewport, manual sync preserves the current view, and cancelling an account denial leaves the request pending. Login and modal keyboard access is contained. See `UI_ACCEPTANCE.md` for role-by-role test coverage and live NUC checks still outstanding.
 
 ## Current workflow
 
