@@ -116,3 +116,22 @@ The database holds pending credentials inactive, with separate intended activati
 If a native Auth reset fails after access is paused, the account remains locked; retry issuing a temporary password. If replacement succeeds but activation is interrupted, sign in using the newly chosen password and finish setup, or ask Enterprise to reissue. The server verifies the current password again before activation and checks that the latest reset has not changed or expired.
 
 Local tests use synthetic HTTP responses and isolated PostgreSQL. They do not verify the NUC's deployed dispatcher, runtime environment, policies or actual second-device behavior; perform the checks above after installation. SMTP is needed only for the retained email-invitation/recovery workflows, not temporary account creation.
+
+## Migration 015 — reconcile live policies and grants
+
+A read-only comparison on 2026-10-31 found the live FieldReady database matched the repository except for: a missing `fr_event_archives_read` policy, an older `fr_events_update` policy that did not exclude closed or deleted classes, and Supabase default table grants (including TRUNCATE) for `anon` and `authenticated`. Migration 015 restores the intended policies and grants. It changes no rows, columns, functions or triggers, runs in one transaction, and is safe to re-run.
+
+**Do not re-run 001–014 on an existing database.** Early migrations replace later policies and functions and silently undo hardening.
+
+On the NUC:
+
+```bash
+mkdir -p ~/fieldready-backups && chmod 700 ~/fieldready-backups
+stamp=$(date +%Y%m%d-%H%M%S)
+docker exec fieldready-db pg_dump -U postgres -d postgres -Fc > ~/fieldready-backups/fieldready-before-015-$stamp.dump
+docker exec -i fieldready-db pg_restore --list < ~/fieldready-backups/fieldready-before-015-$stamp.dump > /dev/null && echo "backup OK"
+curl -fsSL https://raw.githubusercontent.com/DAFTCCC/DAF-TCCC-RaPS-CMRP-web/main/supabase/015_reconcile_live_policies_and_grants.sql -o ~/015.sql
+docker exec -i fieldready-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < ~/015.sql
+```
+
+Verify with the read-only fingerprint (`policies 26`, and no `anon` rows in `information_schema.role_table_grants`), then sign in as an evaluator and a manager and confirm grading, sync and class views still work. Rollback: restore the pre-015 dump with `pg_restore --clean`.
