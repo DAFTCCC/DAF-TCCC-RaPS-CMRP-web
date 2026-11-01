@@ -135,3 +135,16 @@ docker exec -i fieldready-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < ~
 ```
 
 Verify with the read-only fingerprint (`policies 26`, and no `anon` rows in `information_schema.role_table_grants`), then sign in as an evaluator and a manager and confirm grading, sync and class views still work. Rollback: restore the pre-015 dump with `pg_restore --clean`.
+
+## Migration 016 — beta client diagnostics
+
+Creates `fr_client_diagnostics` for silently recorded technical problems (see [DIAGNOSTICS.md](DIAGNOSTICS.md)). Signed-in users may insert their own rows; only Enterprise may read; no client updates or deletes; 500 rows per user per hour. Touches no existing table. Safe to re-run. Until it is installed, the 4.6.1 web app keeps events on each device and retries later.
+
+```bash
+mkdir -p ~/fieldready-backups && chmod 700 ~/fieldready-backups
+stamp=$(date +%Y%m%d-%H%M%S)
+docker exec fieldready-db pg_dump -U postgres -d postgres -Fc > ~/fieldready-backups/fieldready-before-016-$stamp.dump
+docker exec -i fieldready-db pg_restore --list < ~/fieldready-backups/fieldready-before-016-$stamp.dump > /dev/null && echo "backup OK"
+curl -fsSL https://raw.githubusercontent.com/DAFTCCC/DAF-TCCC-RaPS-CMRP-web/main/supabase/016_client_diagnostics.sql -o ~/016.sql
+docker exec -i fieldready-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < ~/016.sql
+```
