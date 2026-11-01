@@ -1,4 +1,4 @@
-const CACHE='fieldready-study-v4.6.0';
+const CACHE='fieldready-study-v4.6.1';
 
 const ASSETS=[
   './',
@@ -7,6 +7,7 @@ const ASSETS=[
   './version.js',
   './access-config.js',
   './backend-config.js',
+  './diagnostics.js',
   './locations.js',
   './skills.js',
   './raps-skills.js',

@@ -13,7 +13,7 @@ class FieldReadyAPI:
  def __init__(self,command,installation):
   self.command,self.installation=command,installation
   self.tables={name:[] for name in ['fr_events','fr_participants','fr_evaluations','fr_voids','fr_profiles','fr_memberships','fr_account_requests']}
-  self.passwords={};self.assignments={};self.evaluator_scopes=set();self.pools={};self.calls=[];self.errors=[];self.archives=[]
+  self.passwords={};self.assignments={};self.evaluator_scopes=set();self.pools={};self.calls=[];self.diagnostics=[];self.errors=[];self.archives=[]
   for uid,role in [('enterprise','enterprise'),('majcom','majcom_manager'),('program','program_manager'),('evaluator','evaluator'),('unassigned','evaluator'),('candidate','evaluator'),('outsider','evaluator')]:
    self.tables['fr_profiles'].append({'user_id':uid,'username':uid,'email':uid+'@example.invalid','display_name':uid.title(),'active':True,'role':role,'password_change_required':False,'password_resume_active':False})
    self.passwords[uid]='valid-password'
@@ -47,6 +47,10 @@ class FieldReadyAPI:
  def request(self,method,url,headers,raw):
   parsed=urlsplit(url);path=parsed.path.removeprefix('/fieldready');query=parse_qs(parsed.query);body=json.loads(raw) if raw else {}
   uid=headers.get('authorization','').removeprefix('Bearer token-')
+  if path=='/rest/v1/fr_client_diagnostics':
+   # Beta diagnostics uploads are kept separate from sync traffic counts.
+   if method=='POST':self.diagnostics.extend(body if isinstance(body,list) else [body])
+   return 201,None
   self.calls.append((uid,method,path,copy.deepcopy(body)))
   if method=='OPTIONS':return 200,None
   if path=='/functions/v1/fieldready-login':

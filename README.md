@@ -1,4 +1,8 @@
-# FieldReady Longitudinal Competency Study — Web/PWA v4.6.0-study-web
+# FieldReady Longitudinal Competency Study — Web/PWA v4.6.1-study-web
+
+## Beta diagnostics — v4.6.1
+
+Technical problems (errors, failed or slow requests, rage and dead clicks, freezes, error messages shown) are recorded silently and uploaded to `fr_client_diagnostics` when signed in. No study data is recorded. Requires migration 016 on the NUC; see [DIAGNOSTICS.md](DIAGNOSTICS.md).
 
 ## Temporary account passwords — v4.6.0
 
